@@ -806,33 +806,35 @@ class TestLuaRuntimeSimulation(unittest.TestCase):
 
     def test_fade_in_and_fade_out_dsp_and_menu_options(self):
         import base64
+        import tempfile
 
-        test_dir = ROOT / 'Source/mods/kugua'
-        test_wav = test_dir / 'test_fade_track.wav'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            clean_tmp = str(tmp_path).replace('\\', '/')
+            test_wav = tmp_path / 'test_fade_track.wav'
 
-        # Generate a test WAV: 10s of 22050Hz mono 16-bit PCM constant tone (amplitude 20000)
-        rate = 22050
-        duration = 10.0
-        n_samples = int(rate * duration)
-        raw_pcm = bytearray()
-        for _ in range(n_samples):
-            raw_pcm.extend(struct.pack('<h', 20000))
+            # Generate a test WAV: 10s of 22050Hz mono 16-bit PCM constant tone (amplitude 20000)
+            rate = 22050
+            duration = 10.0
+            n_samples = int(rate * duration)
+            raw_pcm = bytearray()
+            for _ in range(n_samples):
+                raw_pcm.extend(struct.pack('<h', 20000))
 
-        # Build WAV with RIFF header
-        wav_bytes = bytearray()
-        wav_bytes.extend(b'RIFF')
-        wav_bytes.extend(struct.pack('<I', 36 + len(raw_pcm)))
-        wav_bytes.extend(b'WAVE')
-        wav_bytes.extend(b'fmt ')
-        wav_bytes.extend(struct.pack('<I', 16))
-        wav_bytes.extend(struct.pack('<HHIIHH', 1, 1, rate, rate * 2, 2, 16))
-        wav_bytes.extend(b'data')
-        wav_bytes.extend(struct.pack('<I', len(raw_pcm)))
-        wav_bytes.extend(raw_pcm)
+            # Build WAV with RIFF header
+            wav_bytes = bytearray()
+            wav_bytes.extend(b'RIFF')
+            wav_bytes.extend(struct.pack('<I', 36 + len(raw_pcm)))
+            wav_bytes.extend(b'WAVE')
+            wav_bytes.extend(b'fmt ')
+            wav_bytes.extend(struct.pack('<I', 16))
+            wav_bytes.extend(struct.pack('<HHIIHH', 1, 1, rate, rate * 2, 2, 16))
+            wav_bytes.extend(b'data')
+            wav_bytes.extend(struct.pack('<I', len(raw_pcm)))
+            wav_bytes.extend(raw_pcm)
 
-        test_wav.write_bytes(wav_bytes)
+            test_wav.write_bytes(wav_bytes)
 
-        try:
             lua = lupa.LuaRuntime(unpack_returned_tuples=False)
             env_setup = f"""
             local calls = {{
@@ -841,6 +843,11 @@ class TestLuaRuntimeSimulation(unittest.TestCase):
                 audio_uploads = {{}},
                 options = {{}},
             }}
+
+            os.getenv = function(name)
+                if name == 'LOCALAPPDATA' then return '{clean_tmp}' end
+                return nil
+            end
 
             local mock_player_data = {{
                 health = 80,
@@ -892,6 +899,11 @@ class TestLuaRuntimeSimulation(unittest.TestCase):
 
             return calls, mock_player_data
             """
+
+            # Create the candidate music folder in clean_tmp
+            music_sub = tmp_path / 'MDL/Helldivers2/StimMusic'
+            music_sub.mkdir(parents=True, exist_ok=True)
+            (music_sub / 'stim_music.log').write_text('')
 
             calls, player = lua.execute(env_setup)
             src = (ROOT / 'Source/mods/kugua/stim_music.lua').read_text(encoding='ascii')
@@ -965,9 +977,9 @@ class TestLuaRuntimeSimulation(unittest.TestCase):
             self.assertEqual(first_s2, 20000, "With fade_in=0, first sample must be full amplitude")
             self.assertEqual(last_s2, 20000, "With fade_out=0, last sample must be full amplitude")
 
-        finally:
-            if test_wav.exists():
-                test_wav.unlink()
+            shutdown_fn = lua.globals().shutdown
+            if shutdown_fn:
+                shutdown_fn()
 
 
 if __name__ == '__main__':
