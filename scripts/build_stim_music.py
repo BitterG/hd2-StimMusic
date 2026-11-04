@@ -1,0 +1,1501 @@
+"""Assemble Source/mods/kugua/stim_music.lua and build 9ba626afa44a3aa3.patch_0.
+"""
+from __future__ import annotations
+
+import base64
+import math
+import os
+import re
+import shutil
+import struct
+import sys
+import zipfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / 'scripts'))
+sys.path.insert(0, str(ROOT / 'tests'))
+
+from archive import make_archive, resource_hash
+import loader_accept
+
+RESOURCE = 'mods/kugua/stim_music'
+VERSION = '2.0.0'
+
+print(f"Building {RESOURCE} v{VERSION}...")
+
+# 1. Generate default embedded audio (4s 22050Hz 16-bit mono PCM)
+rate = 22050
+duration = 4.0
+samples_count = int(rate * duration)
+audio_data = bytearray()
+notes = [261.63, 329.63, 392.00, 523.25, 659.25, 783.99, 1046.50]
+for i in range(samples_count):
+    t = i / rate
+    drone = 0.25 * math.sin(2 * math.pi * 130.81 * t) + 0.15 * math.sin(2 * math.pi * 196.00 * t)
+    note_idx = int(t * 8) % len(notes)
+    note_freq = notes[note_idx]
+    note_t = (t * 8) % 1.0
+    note_env = math.exp(-note_t * 5.0)
+    arp = 0.4 * math.sin(2 * math.pi * note_freq * t) * note_env
+    sweep_freq = 200.0 + 600.0 * (t / duration)**1.5
+    sweep = 0.15 * math.sin(2 * math.pi * sweep_freq * t)
+    master_env = 1.0
+    if t < 0.3:
+        master_env = t / 0.3
+    elif t > (duration - 0.5):
+        master_env = (duration - t) / 0.5
+    sample = (drone + arp + sweep) * master_env
+    sample = max(-1.0, min(1.0, sample))
+    sample_int = int(sample * 28000)
+    audio_data.extend(struct.pack('<h', sample_int))
+
+# Format WAVEFORMATEX: tag=1, ch=1, rate=22050, avg=44100, align=2, bits=16, extra=0 (18 bytes)
+wfx_default = struct.pack('<HHIIHHH', 1, 1, rate, rate * 2, 2, 16, 0)
+default_fmt_b64 = base64.b64encode(wfx_default).decode('ascii')
+default_data_b64 = base64.b64encode(audio_data).decode('ascii')
+print(f"Default format: {default_fmt_b64}, Audio b64 length: {len(default_data_b64)}")
+
+converter_cmd_b64 = base64.b64encode((ROOT / 'convert_track.cmd').read_bytes()).decode('ascii')
+converter_ps1_b64 = base64.b64encode((ROOT / 'convert_track.ps1').read_bytes()).decode('ascii')
+
+# Split default_data_b64 into chunks of 1000 characters for Lua readability
+chunk_size = 1000
+b64_chunks = [default_data_b64[i:i + chunk_size] for i in range(0, len(default_data_b64), chunk_size)]
+b64_literal_lines = ['    "' + c + '"' for c in b64_chunks]
+b64_literal = 'table.concat({\n' + ',\n'.join(b64_literal_lines) + '\n})'
+
+lua_template = f'''-- HD2-Addon: {RESOURCE}
+-- StimMusic v{VERSION} for MDL3 (PUC Lua 5.1) + HD2 Data Hub >= 0.3.0 (HD2Data API 1).
+-- Plays audio on stim / healing with segment resume and volume controls.
+-- Pure Lua 5.1, zero FFI, zero memory writes, 7-bit ASCII only.
+
+local KEY = '__KUGUA_STIM_MUSIC'
+if type(rawget(_G, KEY)) == 'table' and rawget(_G, KEY).active == true then
+    return rawget(_G, KEY)
+end
+
+local ADDON_ID = '{RESOURCE}'
+local VERSION = '{VERSION}'
+
+local sr = rawget(_G, 'stingray')
+local App = sr and sr.Application
+local ok_call = function(fn, ...)
+    if type(fn) ~= 'function' then return nil end
+    local ok, res = pcall(fn, ...)
+    if ok then return res else return nil end
+end
+
+-- String table: pure 7-bit ASCII using decimal escapes for Chinese UI labels
+local ZH = {{
+    mod_title = '\\230\\137\\147\\233\\146\\136\\230\\148\\190\\233\\159\\179\\228\\185\\144 (Stim Music)',
+    mod_desc = '\\233\\156\\128\\232\\166\\129 MDL3 + HD2 Data Hub (0.3.0+) \\229\\137\\141\\231\\189\\174\\227\\128\\130\\230\\137\\147\\233\\146\\136\\239\\188\\136\\229\\155\\158\\232\\161\\128\\239\\188\\137\\232\\167\\166\\229\\143\\145\\233\\159\\179\\228\\185\\144\\230\\146\\173\\230\\148\\190\\239\\188\\140\\230\\148\\175\\230\\140\\129\\228\\184\\139\\230\\172\\161\\231\\187\\167\\231\\187\\173\\230\\146\\173\\230\\148\\190\\228\\184\\142\\233\\159\\179\\233\\135\\143\\232\\176\\131\\232\\138\\130\\227\\128\\130\\229\\143\\175\\229\\156\\168 ESC -> MDL \\232\\174\\190\\231\\189\\174\\228\\184\\173\\232\\176\\131\\232\\138\\130\\233\\128\\137\\233\\161\\185\\227\\128\\130',
+    opt_enabled = '\\230\\128\\187\\229\\188\\128\\229\\133\\179 (Enabled)',
+    opt_enabled_desc = '\\230\\137\\147\\233\\146\\136\\230\\148\\190\\233\\159\\179\\228\\185\\144\\230\\168\\161\\231\\187\\132\\230\\128\\187\\229\\188\\128\\229\\133\\179',
+    opt_track = '\\233\\159\\179\\228\\185\\144\\230\\150\\135\\228\\187\\182 (Music Track)',
+    opt_track_desc = '\\229\\189\\147\\229\\137\\141\\231\\148\\159\\230\\149\\136\\231\\154\\132\\233\\159\\179\\228\\185\\144\\230\\150\\135\\228\\187\\182\\229\\144\\141\\227\\128\\130\\229\\143\\175\\229\\156\\168\\230\\173\\164\\229\\136\\135\\230\\141\\162\\239\\188\\140\\230\\148\\175\\230\\140\\129\\231\\131\\173\\230\\155\\180\\230\\150\\176\\227\\128\\130',
+    opt_volume = '\\233\\159\\179\\228\\185\\144\\233\\159\\179\\233\\135\\143 (Volume %)',
+    opt_volume_desc = '\\233\\146\\136\\229\\137\\130\\233\\159\\179\\228\\185\\144\\230\\146\\173\\230\\148\\190\\233\\159\\179\\233\\135\\143 (0-100)',
+    opt_stim_ms = '\\233\\146\\136\\229\\137\\130\\230\\151\\182\\233\\149\\191 (Stim Length ms)',
+    opt_stim_ms_desc = '\\228\\184\\128\\230\\172\\161\\233\\146\\136\\229\\137\\130\\231\\148\\159\\230\\149\\136\\230\\140\\129\\231\\187\\173\\230\\151\\182\\233\\149\\191\\228\\184\\142\\233\\159\\179\\228\\185\\144\\230\\146\\173\\230\\148\\190\\231\\170\\151\\229\\143\\163 (\\230\\175\\171\\231\\167\\146)',
+    opt_min_heal = '\\230\\156\\128\\229\\176\\143\\229\\155\\158\\232\\161\\128\\233\\135\\143\\229\\136\\164\\229\\174\\154',
+    opt_min_heal_desc = '\\229\\141\\149\\230\\172\\161\\229\\136\\164\\229\\174\\154\\233\\146\\136\\229\\137\\130\\231\\148\\159\\230\\149\\136\\231\\154\\132\\230\\156\\128\\229\\176\\143\\229\\155\\158\\232\\161\\128\\230\\149\\176\\229\\128\\188 (1-50)',
+    opt_hot_reload = '\\232\\135\\170\\229\\138\\168\\230\\163\\128\\230\\181\\139\\230\\155\\180\\230\\150\\176 (Hot Reload)',
+    opt_hot_reload_desc = '\\230\\163\\128\\230\\181\\139\\229\\136\\176\\233\\159\\179\\233\\162\\145\\230\\150\\135\\228\\187\\182\\230\\136\\150\\233\\133\\141\\231\\189\\174\\229\\143\\152\\230\\155\\180\\230\\151\\182\\232\\135\\170\\229\\138\\168\\233\\135\\141\\230\\150\\176\\232\\189\\189\\229\\133\\165',
+}}
+local EN = {{
+    mod_title = 'Stim Music',
+    mod_desc = 'Plays audio on stim/healing with segment resume. Requires MDL3 + HD2 Data Hub (0.3.0+).',
+    opt_enabled = 'Enabled',
+    opt_enabled_desc = 'Master toggle for Stim Music mod.',
+    opt_track = 'Music Track',
+    opt_track_desc = 'Currently active music filename. You can switch tracks here with hot-reload.',
+    opt_volume = 'Music Volume (%)',
+    opt_volume_desc = 'Playback volume for stim music (0-100).',
+    opt_stim_ms = 'Stim Length (ms)',
+    opt_stim_ms_desc = 'Stim duration window and playback time per heal (ms).',
+    opt_min_heal = 'Minimum Heal Threshold',
+    opt_min_heal_desc = 'Minimum health increase to count as stim effect (1-50).',
+    opt_hot_reload = 'Hot Reload',
+    opt_hot_reload_desc = 'Automatically reloads when music file or config changes.',
+}}
+
+local function is_chinese_ui()
+    local mdl3 = rawget(_G, 'MDL3')
+    if type(mdl3) == 'table' and type(mdl3.locale) == 'string' then
+        return mdl3.locale:sub(1, 2) == 'zh'
+    end
+    return true -- default to Chinese UI for Chinese game client
+end
+
+local function L(k)
+    local t = is_chinese_ui() and ZH or EN
+    return t[k] or EN[k] or k
+end
+
+-- ---------------------------------------------------------------- Logging & Paths
+local log_dir, log_file
+local candidates = {{}}
+local app = ok_call(os.getenv, 'APPDATA')
+local loc = ok_call(os.getenv, 'LOCALAPPDATA')
+local tmp = ok_call(os.getenv, 'TEMP')
+
+if loc then
+    candidates[#candidates + 1] = loc .. '/MDL/Helldivers2/StimMusic'
+    candidates[#candidates + 1] = loc .. '/MDL/Helldivers2'
+    candidates[#candidates + 1] = loc .. '/CowboyBingus/Helldivers2/StimMusic'
+    candidates[#candidates + 1] = loc .. '/MDL3/StimMusic'
+end
+candidates[#candidates + 1] = 'C:/ProgramData/MDL/Helldivers2/StimMusic'
+candidates[#candidates + 1] = 'C:/ProgramData/MDL/Helldivers2'
+if app then
+    candidates[#candidates + 1] = app .. '/Arrowhead/Helldivers2/StimMusic'
+end
+if tmp then
+    candidates[#candidates + 1] = tmp .. '/StimMusic'
+end
+
+for _, d in ipairs(candidates) do
+    local f = io.open(d .. '/stim_music.log', 'a')
+    if f then
+        log_dir, log_file = d, f
+        break
+    end
+end
+
+local function log_msg(line)
+    if not log_file then return end
+    pcall(function()
+        log_file:write(line, '\\n')
+        log_file:flush()
+    end)
+end
+
+local function log_fmt(fmt, ...)
+    log_msg(string.format(fmt, ...))
+end
+
+log_fmt('=== StimMusic v%s (MDL3 + HD2 Data Hub) outdir=%s ===', VERSION, tostring(log_dir))
+
+-- ---------------------------------------------------------------- Configuration
+local CONFIG = {{
+    enabled = true,
+    volume = 100,
+    stim_ms = 6000,
+    min_heal = 1,
+    hot_reload = true,
+    track = 'stim_music.wav',
+}}
+
+local function get_file_fingerprint(path)
+    if not path then return nil end
+    local f = io.open(path, 'rb')
+    if not f then return nil end
+    local sz = f:seek('end') or 0
+    local head = ''
+    if sz > 0 then
+        f:seek('set', 0)
+        head = f:read(math.min(36, sz)) or ''
+    end
+    f:close()
+    return tostring(sz) .. ':' .. tostring(head)
+end
+
+-- ---------------------------------------------------------------- Mod State
+local M = {{
+    version = VERSION,
+    active = true,
+    clock = 0,
+    options_bound = false,
+    config_ini_fp = nil,
+    
+    -- Hub state:
+    hub_ref = nil,
+    hub_version = 'unknown',
+    hub_state = 'waiting_for_hub',
+    hub_reason = nil,
+    subs = {{}},
+    
+    -- Gameplay tracking:
+    last_health = nil,
+    last_stims = nil,
+    last_alive = true,
+    last_stim_consumed_clock = 0,
+    
+    -- Stim effect & playback timing:
+    stim_active = false,
+    is_playing = false,
+    stim_end_clock = 0,
+    seg_start_clock = 0,
+    seg_end_clock = 0,
+    seg_duration = 6.0,
+    play_retry_idx = nil,
+    play_retry_clock = 0,
+    play_retries = 0,
+    
+    -- Audio system:
+    audio_format_defined = false,
+    audio_api_probed = false,
+    next_upload_clock = 0,
+    ns_slot = 0,
+    current_ns = nil,
+    audio_track_path = nil,
+    audio_track_fp = nil,
+    audio_track_filename = nil,
+    audio_info = nil,
+    current_segment = 1,
+    total_segments = 1,
+    segment_durations = {{}},
+    uploaded_segments = {{}},
+    next_upload_idx = 1,
+    using_default = false,
+    track_gen = 0,
+    
+    -- Statistics:
+    stims_count = 0,
+    heals_count = 0,
+    next_status_clock = 0,
+    next_hot_reload_clock = 0,
+    last_status_verdict = 'INITIALIZING',
+}}
+rawset(_G, KEY, M)
+
+local function load_ini_config()
+    if not log_dir then return end
+    local p = log_dir .. '/STIM_MUSIC_CONFIG.ini'
+    local f = io.open(p, 'r')
+    if not f then
+        local wf = io.open(p, 'w')
+        if wf then
+            wf:write('# StimMusic configuration\\n')
+            wf:write('enabled = 1\\n')
+            wf:write('volume = 100\\n')
+            wf:write('stim_ms = 6000\\n')
+            wf:write('min_heal = 1\\n')
+            wf:write('hot_reload = 1\\n')
+            wf:write('track = stim_music.wav\\n')
+            wf:close()
+            M.config_ini_fp = get_file_fingerprint(p)
+        end
+        return
+    end
+    for line in f:lines() do
+        local k, v = line:match('^%s*([%w_]+)%s*=%s*(.-)%s*$')
+        if k and v and not line:match('^%s*#') then
+            k = k:lower()
+            if k == 'enabled' then CONFIG.enabled = (v == '1' or v:lower() == 'true')
+            elseif k == 'volume' then
+                local val = tonumber(v)
+                if val then CONFIG.volume = math.max(0, math.min(100, math.floor(val + 0.5))) end
+            elseif k == 'stim_ms' then
+                local val = tonumber(v)
+                if val then CONFIG.stim_ms = math.max(1000, math.min(30000, math.floor(val + 0.5))) end
+            elseif k == 'min_heal' then
+                local val = tonumber(v)
+                if val then CONFIG.min_heal = math.max(0, math.min(100, math.floor(val + 0.5))) end
+            elseif k == 'hot_reload' then CONFIG.hot_reload = (v == '1' or v:lower() == 'true')
+            elseif k == 'track' then CONFIG.track = v
+            end
+        end
+    end
+    f:close()
+    M.config_ini_fp = get_file_fingerprint(p)
+end
+
+local function persist_ini_config()
+    if not log_dir then return end
+    local p = log_dir .. '/STIM_MUSIC_CONFIG.ini'
+    local f = io.open(p, 'w')
+    if not f then return end
+    f:write('# StimMusic configuration (Auto-saved by MDL menu)\\n')
+    f:write('enabled = ', CONFIG.enabled and '1' or '0', '\\n')
+    f:write('volume = ', tostring(math.floor(CONFIG.volume or 100)), '\\n')
+    f:write('stim_ms = ', tostring(math.floor(CONFIG.stim_ms or 6000)), '\\n')
+    f:write('min_heal = ', tostring(math.floor(CONFIG.min_heal or 1)), '\\n')
+    f:write('hot_reload = ', CONFIG.hot_reload and '1' or '0', '\\n')
+    f:write('track = ', tostring(CONFIG.track or 'stim_music.wav'), '\\n')
+    f:close()
+    M.config_ini_fp = get_file_fingerprint(p)
+end
+
+load_ini_config()
+
+-- ---------------------------------------------------------------- Base64 & Audio Utils
+local B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+local B64_T = {{}}
+for i = 1, #B64 do B64_T[i-1] = B64:sub(i, i) end
+
+local function b64_encode(data)
+    local out = {{}}
+    local len = #data
+    local rem = len % 3
+    local full = len - rem
+    local floor = math.floor
+    local byte = string.byte
+    local n = 0
+    for i = 1, full, 3 do
+        local b1, b2, b3 = byte(data, i, i + 2)
+        local c1 = floor(b1 / 4)
+        local c2 = (b1 % 4) * 16 + floor(b2 / 16)
+        local c3 = (b2 % 16) * 4 + floor(b3 / 64)
+        local c4 = b3 % 64
+        n = n + 1
+        out[n] = B64_T[c1] .. B64_T[c2] .. B64_T[c3] .. B64_T[c4]
+    end
+    if rem == 1 then
+        local b1 = byte(data, len)
+        out[n + 1] = B64_T[floor(b1 / 4)] .. B64_T[(b1 % 4) * 16] .. '=='
+    elseif rem == 2 then
+        local b1, b2 = byte(data, len - 1, len)
+        out[n + 1] = B64_T[floor(b1 / 4)] .. B64_T[(b1 % 4) * 16 + floor(b2 / 16)] .. B64_T[(b2 % 16) * 4] .. '='
+    end
+    return table.concat(out)
+end
+
+local B64_REV = {{}}
+for i = 1, #B64 do B64_REV[B64:byte(i)] = i - 1 end
+
+local function b64_decode(data)
+    data = data:gsub('[^A-Za-z0-9+/=]', '')
+    local out = {{}}
+    local len = #data
+    local char = string.char
+    local floor = math.floor
+    local n = 0
+    for i = 1, len, 4 do
+        local b1 = data:byte(i)
+        local b2 = data:byte(i+1)
+        local b3 = data:byte(i+2)
+        local b4 = data:byte(i+3)
+        if not b1 or not b2 then break end
+        local a = B64_REV[b1] or 0
+        local b = B64_REV[b2] or 0
+        local c = (b3 and b3 ~= 61) and B64_REV[b3] or nil
+        local d = (b4 and b4 ~= 61) and B64_REV[b4] or nil
+        
+        n = n + 1
+        out[n] = char((a * 4 + floor(b / 16)) % 256)
+        if c then
+            n = n + 1
+            out[n] = char(((b % 16) * 16 + floor(c / 4)) % 256)
+            if d then
+                n = n + 1
+                out[n] = char(((c % 4) * 64 + d) % 256)
+            end
+        end
+    end
+    return table.concat(out)
+end
+
+local CONVERTER_CMD_B64 = '{converter_cmd_b64}'
+local CONVERTER_PS1_B64 = '{converter_ps1_b64}'
+
+local function ensure_converter_scripts()
+    if not log_dir then return end
+    local cmd_p = log_dir .. '/convert_track.cmd'
+    local ps1_p = log_dir .. '/convert_track.ps1'
+    
+    local f_cmd = io.open(cmd_p, 'r')
+    if not f_cmd then
+        local w = io.open(cmd_p, 'wb')
+        if w then
+            w:write(b64_decode(CONVERTER_CMD_B64))
+            w:close()
+            log_fmt('Auto-deployed converter script: %s', cmd_p)
+        end
+    else
+        f_cmd:close()
+    end
+    
+    local f_ps1 = io.open(ps1_p, 'r')
+    if not f_ps1 then
+        local w = io.open(ps1_p, 'wb')
+        if w then
+            w:write(b64_decode(CONVERTER_PS1_B64))
+            w:close()
+            log_fmt('Auto-deployed converter script: %s', ps1_p)
+        end
+    else
+        f_ps1:close()
+    end
+end
+
+ensure_converter_scripts()
+
+local function le16(s, i)
+    local a, b = s:byte(i, i + 1)
+    if not a or not b then return 0 end
+    return a + b * 256
+end
+
+local function le32(s, i)
+    local a, b, c, d = s:byte(i, i + 3)
+    if not a or not d then return 0 end
+    return a + b * 256 + c * 65536 + d * 16777216
+end
+
+local function pack16(v)
+    v = math.floor(v) % 65536
+    return string.char(v % 256, math.floor(v / 256) % 256)
+end
+
+local function pack32(v)
+    v = math.floor(v) % 4294967296
+    local b0 = v % 256
+    local b1 = math.floor(v / 256) % 256
+    local b2 = math.floor(v / 65536) % 256
+    local b3 = math.floor(v / 16777216) % 256
+    return string.char(b0, b1, b2, b3)
+end
+
+local DEFAULT_WFX_B64 = '{default_fmt_b64}'
+local DEFAULT_AUDIO_B64 = 
+{b64_literal}
+
+local function parse_wav(path)
+    local f = io.open(path, 'rb')
+    if not f then return nil, 'cannot open file' end
+    local head = f:read(12)
+    if not head or #head < 12 or head:sub(1,4) ~= 'RIFF' or head:sub(9,12) ~= 'WAVE' then
+        f:close()
+        return nil, 'not a valid RIFF/WAVE file'
+    end
+    local tag, ch, rate, avg, align, bits
+    local data_pos, data_size
+    local raw_fmt = nil
+    while true do
+        local chunk = f:read(8)
+        if not chunk or #chunk < 8 then break end
+        local cid = chunk:sub(1, 4)
+        local csize = le32(chunk, 5)
+        local pad = csize % 2
+        if cid == 'fmt ' then
+            local fmt_bytes = f:read(csize)
+            if not fmt_bytes or #fmt_bytes < 16 then f:close(); return nil, 'bad fmt chunk' end
+            raw_fmt = fmt_bytes
+            tag = le16(fmt_bytes, 1)
+            ch = le16(fmt_bytes, 3)
+            rate = le32(fmt_bytes, 5)
+            avg = le32(fmt_bytes, 9)
+            align = le16(fmt_bytes, 13)
+            bits = le16(fmt_bytes, 15)
+            if pad > 0 then f:read(pad) end
+        elseif cid == 'data' then
+            data_pos = f:seek()
+            data_size = csize
+            break
+        else
+            f:seek('cur', csize + pad)
+        end
+    end
+    f:close()
+    if not tag or not data_pos or not raw_fmt then return nil, 'missing fmt or data chunk' end
+    if tag ~= 1 and tag ~= 2 then
+        return nil, string.format('unsupported format tag %d (only 1=PCM, 2=MS-ADPCM supported)', tag)
+    end
+    if tag == 1 and bits ~= 16 then
+        return nil, string.format('PCM must be 16-bit (got %d-bit)', bits)
+    end
+    if tag == 2 and bits ~= 4 then
+        return nil, string.format('MS-ADPCM must be 4-bit (got %d-bit)', bits)
+    end
+
+    local wfx_b64
+    if tag == 2 then
+        -- Preserve authentic 50-byte ADPCMWAVEFORMAT header with cbSize and coefficient table
+        wfx_b64 = b64_encode(raw_fmt)
+    else
+        -- Standard 16-bit PCM: ensure exactly 18-byte WAVEFORMATEX with cbSize=0
+        local wfx
+        if #raw_fmt >= 18 then
+            wfx = raw_fmt:sub(1, 18)
+        else
+            wfx = raw_fmt:sub(1, 16) .. pack16(0)
+        end
+        wfx_b64 = b64_encode(wfx)
+    end
+
+    local dur = (avg and avg > 0) and (data_size / avg) or 0
+    return {{
+        path = path,
+        tag = tag,
+        channels = ch,
+        rate = rate,
+        avg = avg,
+        align = align,
+        bits = bits,
+        data_pos = data_pos,
+        data_size = data_size,
+        wfx_b64 = wfx_b64,
+        duration = dur,
+    }}
+end
+
+local function read_wav_slice(info, start_sec, duration_sec)
+    local f = io.open(info.path, 'rb')
+    if not f then return nil, 0 end
+    local start_byte = math.floor(start_sec * info.avg)
+    start_byte = start_byte - (start_byte % info.align)
+    if start_byte >= info.data_size then f:close(); return nil, 0 end
+
+    local slice_bytes = math.floor(duration_sec * info.avg)
+    slice_bytes = slice_bytes - (slice_bytes % info.align)
+    if start_byte + slice_bytes > info.data_size then
+        slice_bytes = info.data_size - start_byte
+        slice_bytes = slice_bytes - (slice_bytes % info.align)
+    end
+    if slice_bytes <= 0 then f:close(); return nil, 0 end
+
+    f:seek('set', info.data_pos + start_byte)
+    local raw = f:read(slice_bytes)
+    f:close()
+    if not raw or #raw < slice_bytes then return nil, 0 end
+    local actual_duration = slice_bytes / info.avg
+    return b64_encode(raw), actual_duration
+end
+
+-- ---------------------------------------------------------------- Audio Driver
+local ROLE = 'stim'
+local NS_RING = {{
+    ADDON_ID .. '_a',
+    ADDON_ID .. '_b',
+    ADDON_ID .. '_c',
+    ADDON_ID .. '_d',
+}}
+
+local function get_audio_service()
+    local mdl3 = rawget(_G, 'MDL3')
+    local A = type(mdl3) == 'table' and mdl3.audio or nil
+    if type(A) == 'table' and A.api == 1 and type(A.play) == 'function' then
+        return A
+    end
+    return nil
+end
+
+local function scan_available_tracks()
+    local list = {{}}
+    local seen = {{}}
+    local function add(name)
+        if name and name ~= '' and not seen[name] then
+            seen[name] = true
+            list[#list + 1] = name
+        end
+    end
+    if CONFIG.track and CONFIG.track ~= '' then
+        local base = CONFIG.track:match('([^/\\\\]+%.wav)$') or CONFIG.track
+        add(base)
+    end
+    local known = {{
+        'stim_music.wav',
+        'stim_music_alt.wav',
+        'yu_ai.wav',
+        'pao_mo.wav',
+        'pi_pa.wav',
+        'music.wav',
+        'bgm.wav',
+        'stim.wav',
+        'heal.wav',
+    }}
+    for _, name in ipairs(known) do
+        local found = false
+        if log_dir then
+            local f = io.open(log_dir .. '/' .. name, 'rb')
+            if f then f:close(); found = true end
+        end
+        if not found then
+            for _, d in ipairs(candidates) do
+                local f = io.open(d .. '/' .. name, 'rb')
+                if f then f:close(); found = true; break end
+            end
+        end
+        if found then
+            add(name)
+        end
+    end
+    if #list == 0 then
+        list[1] = '[embedded default]'
+    end
+    return list
+end
+
+local function locate_music_file()
+    if CONFIG.track and CONFIG.track ~= '' then
+        local paths = {{}}
+        if log_dir then paths[#paths + 1] = log_dir .. '/' .. CONFIG.track end
+        paths[#paths + 1] = CONFIG.track
+        for _, p in ipairs(paths) do
+            local f = io.open(p, 'rb')
+            if f then f:close(); return p end
+        end
+    end
+    for _, d in ipairs(candidates) do
+        local p = d .. '/stim_music.wav'
+        local f = io.open(p, 'rb')
+        if f then f:close(); return p end
+    end
+    if log_dir then
+        local names = {{ 'stim_music.wav', 'stim_music_alt.wav', 'yu_ai.wav', 'pao_mo.wav', 'pi_pa.wav' }}
+        for _, n in ipairs(names) do
+            local p = log_dir .. '/' .. n
+            local f = io.open(p, 'rb')
+            if f then f:close(); return p end
+        end
+    end
+    return nil
+end
+
+local function upload_single_segment(idx)
+    local A = get_audio_service()
+    local ns = M.current_ns
+    if not A or not ns or M.using_default or not M.audio_info then return false end
+    if idx < 1 or idx > M.total_segments then return false end
+    if M.uploaded_segments[idx] then return true end
+    
+    local stim_sec = math.max(2.0, (CONFIG.stim_ms or 6000) / 1000)
+    local start_sec = (idx - 1) * stim_sec
+    local b64_data, actual_duration = read_wav_slice(M.audio_info, start_sec, stim_sec)
+    if b64_data then
+        local key = 's' .. M.track_gen .. '_' .. idx
+        local ok, why = A.upload(ns, key, b64_data)
+        if ok then
+            M.uploaded_segments[idx] = true
+            M.segment_durations[idx] = actual_duration or stim_sec
+            log_fmt('Segment %d queued for upload on %s (key=%s, dur=%.1fs)', idx, ns, key, actual_duration or stim_sec)
+            return true
+        else
+            log_fmt('Upload %s refused for ns=%s: %s', key, ns, tostring(why))
+            return false
+        end
+    end
+    return false
+end
+
+local function probe_audio_api(A, ns)
+    if M.audio_api_probed or not A then return end
+    M.audio_api_probed = true
+    log_fmt('=== MDL3 Audio API Diagnostics ===')
+    for k, v in pairs(A) do
+        log_fmt('  MDL3.audio.%s = %s (%s)', tostring(k), type(v), tostring(v))
+    end
+    if type(A.status) == 'function' and ns then
+        local ok, st = pcall(A.status, ns)
+        if ok and type(st) == 'table' then
+            for k, v in pairs(st) do
+                log_fmt('  status(%s).%s = %s (%s)', ns, tostring(k), type(v), tostring(v))
+            end
+        else
+            log_fmt('  status(%s) returned: ok=%s, res=%s', ns, tostring(ok), tostring(st))
+        end
+    end
+    log_fmt('==================================')
+end
+
+local function init_audio_track()
+    local A = get_audio_service()
+    if not A then return false end
+    
+    -- Stop previous audio and release previous namespace assets
+    local old_ns = M.current_ns
+    if old_ns then
+        pcall(A.stop, old_ns, ROLE)
+        if type(A.release) == 'function' then
+            pcall(A.release, old_ns)
+        end
+    end
+    
+    -- Advance to next rotating namespace to avoid collision with in-progress native release
+    M.ns_slot = ((M.ns_slot or 0) % #NS_RING) + 1
+    M.current_ns = NS_RING[M.ns_slot]
+    local current_ns = M.current_ns
+    
+    M.track_gen = (M.track_gen or 0) + 1
+    M.stim_active = false
+    M.is_playing = false
+    M.play_retry_idx = nil
+    M.play_retries = 0
+    M.segment_durations = {{}}
+    M.uploaded_segments = {{}}
+    M.seg_duration = nil
+    M.seg_start_clock = nil
+    M.seg_end_clock = nil
+    M.next_upload_clock = 0
+    
+    local path = locate_music_file()
+    if path then
+        local info, err = parse_wav(path)
+        if info then
+            M.audio_track_path = path
+            M.audio_track_fp = get_file_fingerprint(path)
+            M.audio_track_filename = path:match('([^/\\\\]+%.wav)$') or path
+            M.audio_info = info
+            M.using_default = false
+            local stim_sec = math.max(2.0, (CONFIG.stim_ms or 6000) / 1000)
+            local total_segs = math.ceil(info.duration / stim_sec)
+            M.total_segments = math.min(100, math.max(1, total_segs))
+            M.current_segment = 1
+            
+            local ok_f, why_f = A.define_format(current_ns, info.wfx_b64)
+            if not ok_f then log_fmt('define_format failed for %s: %s', current_ns, tostring(why_f)) end
+            local ok_p, why_p = A.pool(current_ns, {{ [ROLE] = 2 }})
+            if not ok_p then log_fmt('pool failed for %s: %s', current_ns, tostring(why_p)) end
+            
+            probe_audio_api(A, current_ns)
+            
+            -- UI thread: queue segment 1 asynchronously to eliminate menu stutter
+            M.next_upload_idx = 1
+            
+            local fmt_name = (info.tag == 2) and 'MS-ADPCM' or 'PCM-16'
+            log_fmt('Audio track loaded: %s on ns=%s (fmt=%s, gen=%d, %.1fs, %d channels, %d Hz, %d segments)',
+                path, current_ns, fmt_name, M.track_gen, info.duration, info.channels, info.rate, M.total_segments)
+            return true
+        else
+            log_fmt('WAV parse error (%s): %s', tostring(path), tostring(err))
+        end
+    end
+    
+    -- Fall back to embedded default
+    M.audio_track_path = nil
+    M.audio_track_fp = nil
+    M.audio_track_filename = '[embedded default]'
+    M.audio_info = nil
+    M.using_default = true
+    M.total_segments = 1
+    M.current_segment = 1
+    M.segment_durations[1] = 4.0
+    
+    A.define_format(current_ns, DEFAULT_WFX_B64)
+    A.pool(current_ns, {{ [ROLE] = 2 }})
+    probe_audio_api(A, current_ns)
+    local def_key = 's' .. M.track_gen .. '_1'
+    A.upload(current_ns, def_key, DEFAULT_AUDIO_B64)
+    M.uploaded_segments[1] = true
+    M.next_upload_idx = 2
+    log_fmt('Using embedded default stim audio on ns=%s (key=%s)', current_ns, def_key)
+    return true
+end
+
+local function step_audio_uploads()
+    local A = get_audio_service()
+    local ns = M.current_ns
+    if not A or not ns or M.using_default or not M.audio_info then return end
+    if M.next_upload_idx > M.total_segments then return end
+    
+    -- Rolling prefetch window: only upload up to (current_segment + 2) segments
+    -- Completely prevents consecutive frame freezes and excessive memory consumption
+    local prefetch_limit = math.min(M.total_segments, (M.current_segment or 1) + 2)
+    if M.next_upload_idx > prefetch_limit then return end
+    
+    -- Fast forward if segment already uploaded
+    if M.uploaded_segments[M.next_upload_idx] then
+        M.next_upload_idx = M.next_upload_idx + 1
+        return
+    end
+    
+    -- Throttling: minimum 250ms between uploads to spread base64 encoding cost across frames
+    if M.clock < (M.next_upload_clock or 0) then return end
+    
+    -- Native status check: ensure previous upload has completed decoding in XAudio2
+    local prev_idx = M.next_upload_idx - 1
+    local prev_ready = true
+    if prev_idx >= 1 then
+        if type(A.status) == 'function' then
+            local ok_st, st = pcall(A.status, ns)
+            if ok_st and type(st) == 'table' and type(st.ready) == 'number' then
+                prev_ready = (st.ready >= prev_idx)
+            end
+        elseif type(A.ready) == 'function' then
+            local prev_key = 's' .. M.track_gen .. '_' .. prev_idx
+            local ok_r, is_r = pcall(A.ready, ns, prev_key)
+            prev_ready = ok_r and (is_r == true)
+        end
+    end
+    
+    if prev_ready then
+        local idx = M.next_upload_idx
+        if upload_single_segment(idx) then
+            M.next_upload_idx = idx + 1
+            M.next_upload_clock = M.clock + 0.25
+        else
+            M.next_upload_clock = M.clock + 0.5
+        end
+    end
+end
+
+-- ---------------------------------------------------------------- Stim Music Actions
+local function start_stim_segment(seg_idx)
+    if not CONFIG.enabled then return false end
+    local A = get_audio_service()
+    local ns = M.current_ns
+    if not A or not ns then return false end
+    
+    if not M.using_default then
+        if not M.uploaded_segments[seg_idx] then
+            upload_single_segment(seg_idx)
+        end
+    end
+    
+    local key = M.using_default and ('s' .. M.track_gen .. '_1') or ('s' .. M.track_gen .. '_' .. seg_idx)
+    local vol = math.max(0, math.min(100, math.floor((CONFIG.volume or 100) + 0.5)))
+    if vol <= 0 then return false end
+    
+    -- Check if the asset has finished receiving & decoding in the native host
+    local ready = false
+    if M.using_default then
+        ready = true
+    elseif type(A.status) == 'function' then
+        local ok_st, st = pcall(A.status, ns)
+        if ok_st and type(st) == 'table' and type(st.ready) == 'number' then
+            ready = (st.ready >= seg_idx)
+        else
+            ready = (M.uploaded_segments[seg_idx] == true)
+        end
+    elseif type(A.ready) == 'function' then
+        local ok_r, is_r = pcall(A.ready, ns, key)
+        ready = ok_r and (is_r == true)
+    else
+        ready = (M.uploaded_segments[seg_idx] == true)
+    end
+    
+    if not ready then
+        local retries = (M.play_retries or 0) + 1
+        M.play_retries = retries
+        if retries == 1 or retries % 5 == 0 then
+            log_fmt('Stim segment %s not ready yet on %s (retrying, attempt #%d)', key, ns, retries)
+        end
+        M.play_retry_idx = seg_idx
+        M.play_retry_clock = M.clock + 0.1
+        return false
+    end
+    
+    local ok, played = pcall(A.play, ns, key, {{ role = ROLE, volume = vol }})
+    if ok and played == true then
+        local stim_sec = math.max(2.0, (CONFIG.stim_ms or 6000) / 1000)
+        local dur = (M.segment_durations and M.segment_durations[seg_idx]) or (M.using_default and 4.0) or stim_sec
+        M.seg_duration = dur
+        M.seg_start_clock = M.clock
+        M.seg_end_clock = M.clock + dur
+        M.is_playing = true
+        M.play_retry_idx = nil
+        M.play_retries = 0
+        M.stims_count = M.stims_count + 1
+        M.last_status_verdict = string.format('PLAYING - segment %d / %d (%.1fs)', seg_idx, M.total_segments, dur)
+        log_fmt('Stim music started: %s on %s (vol=%d, dur=%.1fs, stim#=%d)', key, ns, vol, dur, M.stims_count)
+        return true
+    else
+        local retries = (M.play_retries or 0) + 1
+        M.play_retries = retries
+        if retries == 1 or retries % 5 == 0 then
+            log_fmt('Stim play failed for %s on %s (vol=%d, ok=%s, played=%s, retry #%d)',
+                key, ns, vol, tostring(ok), tostring(played), retries)
+        end
+        M.play_retry_idx = seg_idx
+        M.play_retry_clock = M.clock + 0.1
+        return false
+    end
+end
+
+local function advance_to_next_segment()
+    local prev = M.current_segment
+    M.current_segment = M.current_segment + 1
+    if M.current_segment > M.total_segments then
+        M.current_segment = 1
+    end
+    return prev, M.current_segment
+end
+
+local function stop_stim_playback()
+    if not M.stim_active and not M.is_playing then return end
+    M.stim_active = false
+    M.is_playing = false
+    M.play_retry_idx = nil
+    M.play_retries = 0
+    local A = get_audio_service()
+    local ns = M.current_ns
+    if A and ns then
+        pcall(A.stop, ns, ROLE)
+    end
+    local prev, nxt = advance_to_next_segment()
+    M.last_status_verdict = string.format('PAUSED - played seg %d, next will be %d', prev, nxt)
+    log_fmt('Stim music stopped: segment %d finished, next will be %d', prev, nxt)
+end
+
+-- ---------------------------------------------------------------- Status Snapshot
+local function write_status_snapshot()
+    if not log_dir then return end
+    local p = log_dir .. '/STIM_MUSIC_STATUS.txt'
+    local f = io.open(p, 'w')
+    if not f then return end
+    
+    local stim_dur = math.max(2.0, (CONFIG.stim_ms or 6000) / 1000)
+    local remaining_ms = M.stim_active and math.floor(math.max(0, M.stim_end_clock - M.clock) * 1000) or -1
+    
+    f:write('verdict=', M.last_status_verdict, '\\n')
+    f:write('revision=', VERSION, '\\n')
+    f:write('enabled=', tostring(CONFIG.enabled), '\\n')
+    f:write('stim_ms=', tostring(CONFIG.stim_ms), '\\n')
+    f:write('volume=', tostring(CONFIG.volume), '\\n')
+    f:write('min_heal=', tostring(CONFIG.min_heal), '\\n')
+    f:write('hot_reload=', tostring(CONFIG.hot_reload), '\\n')
+    f:write('folder=', tostring(log_dir), '\\n')
+    f:write('namespace=', tostring(M.current_ns or 'none'), '\\n')
+    f:write('track=', tostring(M.audio_track_path or '[embedded default]'), '\\n')
+    f:write('filename=', tostring(M.audio_track_filename or 'none'), '\\n')
+    f:write('using_default=', tostring(M.using_default), '\\n')
+    f:write('total_segments=', tostring(M.total_segments), '\\n')
+    f:write('current_segment=', tostring(M.current_segment), '\\n')
+    f:write('stim_active=', tostring(M.stim_active), '\\n')
+    f:write('is_playing=', tostring(M.is_playing), '\\n')
+    f:write('stim_remaining_ms=', tostring(remaining_ms), '\\n')
+    f:write('stims_count=', tostring(M.stims_count), '\\n')
+    f:write('heals_count=', tostring(M.heals_count), '\\n')
+    f:write('hub_state=', tostring(M.hub_state), '\\n')
+    f:write('hub_version=', tostring(M.hub_version), '\\n')
+    f:close()
+end
+
+-- ---------------------------------------------------------------- Mod Options Menu
+local function find_options_api()
+    local mom = rawget(_G, 'ModOptionsMenu')
+    if type(mom) == 'table' and type(mom.register_option) == 'function' then return mom end
+    local mdl = rawget(_G, 'MDL3')
+    local compat = type(mdl) == 'table' and (mdl.mod_options_menu or mdl.mod_options) or nil
+    if type(compat) == 'table' and type(compat.register_option) == 'function' then return compat end
+    return nil
+end
+
+local function bind_mod_options()
+    if M.options_bound then return end
+    local MOM = find_options_api()
+    if not MOM then return end
+    M.options_bound = true
+
+    local function reg(key, spec, apply_fn)
+        local id = 'kugua_stim_music.' .. key
+        spec.mod_id = ADDON_ID
+        spec.mod = L('mod_title')
+        local ok = ok_call(MOM.register_option, id, spec)
+        if not ok then return end
+        if type(MOM.get) == 'function' then
+            local saved = ok_call(MOM.get, id)
+            if saved ~= nil then apply_fn(saved) end
+        end
+        if type(MOM.on_change) == 'function' then
+            ok_call(MOM.on_change, id, function(val)
+                apply_fn(val)
+            end)
+        end
+    end
+
+    reg('enabled', {{
+        type = 'toggle', default = CONFIG.enabled,
+        label = L('opt_enabled'), description = L('opt_enabled_desc'),
+    }}, function(v)
+        local val = nil
+        if type(v) == 'boolean' then val = v
+        elseif type(v) == 'string' then val = (v:lower() == 'true' or v == '1')
+        elseif type(v) == 'number' then val = (v ~= 0)
+        end
+        if val ~= nil and val ~= CONFIG.enabled then
+            CONFIG.enabled = val
+            log_fmt('Enabled set to %s', tostring(val))
+            if not val and M.stim_active then
+                stop_stim_playback()
+            end
+            write_status_snapshot()
+            persist_ini_config()
+        end
+    end)
+
+    local tracks = scan_available_tracks()
+    local default_idx = 1
+    local cur_name = M.audio_track_filename or (M.audio_track_path and M.audio_track_path:match('([^/\\\\]+%.wav)$')) or CONFIG.track or 'stim_music.wav'
+    for i, name in ipairs(tracks) do
+        if name:lower() == cur_name:lower() then
+            default_idx = i
+            break
+        end
+    end
+
+    reg('track', {{
+        type = 'choice',
+        choices = tracks,
+        default = default_idx,
+        label = L('opt_track'),
+        description = L('opt_track_desc'),
+    }}, function(v)
+        local chosen = nil
+        if type(v) == 'number' then
+            chosen = tracks[v]
+        elseif type(v) == 'string' then
+            chosen = v
+        end
+        if chosen and chosen ~= '' then
+            local target = chosen:find('^%[') and '' or chosen
+            if target ~= CONFIG.track then
+                CONFIG.track = target
+                log_fmt('Menu switched track to: %s', chosen)
+                init_audio_track()
+                write_status_snapshot()
+                persist_ini_config()
+                M.next_hot_reload_clock = M.clock + 3.0
+            end
+        end
+    end)
+
+    reg('volume', {{
+        type = 'slider', min = 0, max = 100, step = 5, default = CONFIG.volume,
+        label = L('opt_volume'), description = L('opt_volume_desc'),
+    }}, function(v)
+        local num = tonumber(v)
+        if num then
+            num = math.max(0, math.min(100, math.floor(num + 0.5)))
+            if num ~= CONFIG.volume then
+                CONFIG.volume = num
+                log_fmt('Volume set to %d%%', CONFIG.volume)
+                if num == 0 and M.stim_active then
+                    stop_stim_playback()
+                end
+                write_status_snapshot()
+                persist_ini_config()
+            end
+        end
+    end)
+
+    reg('stim_ms', {{
+        type = 'slider', min = 2000, max = 8000, step = 250, default = CONFIG.stim_ms,
+        label = L('opt_stim_ms'), description = L('opt_stim_ms_desc'),
+    }}, function(v)
+        local num = tonumber(v)
+        if num then
+            num = math.max(1000, math.min(30000, math.floor(num + 0.5)))
+            if num ~= CONFIG.stim_ms then
+                CONFIG.stim_ms = num
+                log_fmt('Stim duration set to %dms', CONFIG.stim_ms)
+                write_status_snapshot()
+                persist_ini_config()
+            end
+        end
+    end)
+
+    reg('min_heal', {{
+        type = 'slider', min = 1, max = 50, step = 1, default = CONFIG.min_heal,
+        label = L('opt_min_heal'), description = L('opt_min_heal_desc'),
+    }}, function(v)
+        local num = tonumber(v)
+        if num then
+            num = math.max(0, math.min(100, math.floor(num + 0.5)))
+            if num ~= CONFIG.min_heal then
+                CONFIG.min_heal = num
+                log_fmt('Min heal set to %d', CONFIG.min_heal)
+                write_status_snapshot()
+                persist_ini_config()
+            end
+        end
+    end)
+
+    reg('hot_reload', {{
+        type = 'toggle', default = CONFIG.hot_reload,
+        label = L('opt_hot_reload'), description = L('opt_hot_reload_desc'),
+    }}, function(v)
+        local val = nil
+        if type(v) == 'boolean' then val = v
+        elseif type(v) == 'string' then val = (v:lower() == 'true' or v == '1')
+        elseif type(v) == 'number' then val = (v ~= 0)
+        end
+        if val ~= nil and val ~= CONFIG.hot_reload then
+            CONFIG.hot_reload = val
+            log_fmt('Hot reload set to %s', tostring(val))
+            write_status_snapshot()
+            persist_ini_config()
+        end
+    end)
+
+    log_msg('Mod options bound successfully with ModOptionsMenu.')
+end
+
+-- ---------------------------------------------------------------- HD2Data Event Loop
+local function unsubscribe_all()
+    for name, sub in pairs(M.subs) do
+        if type(sub) == 'table' and type(sub.unsubscribe) == 'function' then
+            pcall(sub.unsubscribe, sub)
+        end
+    end
+    M.subs = {{}}
+end
+
+local function on_mission_started(ev)
+    M.last_health = nil
+    M.last_stims = nil
+    M.stim_active = false
+    M.current_segment = 1
+    log_msg('Mission started: stim music position reset to segment 1.')
+end
+
+local function on_mission_ended(ev)
+    stop_stim_playback()
+    M.last_health = nil
+    M.last_stims = nil
+    log_msg('Mission ended: stim playback stopped.')
+end
+
+local function on_entity_died(ev)
+    if ev and ev.avatar and ev.local_killer then
+        stop_stim_playback()
+    end
+end
+
+local EVENT_HANDLERS = {{
+    {{ 'mission_started', on_mission_started }},
+    {{ 'mission_ended',   on_mission_ended   }},
+    {{ 'entity_died',     on_entity_died     }},
+}}
+
+local function hub_tick()
+    local D = rawget(_G, 'HD2Data')
+    if D == nil then
+        if M.hub_ref ~= nil then unsubscribe_all() end
+        M.hub_state = 'waiting_for_hub'
+        return
+    end
+    if type(D) ~= 'table' or tonumber(D.api) ~= 1 then
+        if M.hub_ref ~= nil then unsubscribe_all() end
+        M.hub_state = 'bad_api'
+        return
+    end
+
+    if D ~= M.hub_ref then
+        unsubscribe_all()
+        M.hub_ref = D
+        M.hub_version = tostring(D.version or '?')
+        M.hub_state = 'ready'
+        log_fmt('HD2Data bound version=%s api=%s', M.hub_version, tostring(D.api))
+    end
+
+    for _, pair in ipairs(EVENT_HANDLERS) do
+        local name, fn = pair[1], pair[2]
+        local sub = M.subs[name]
+        local active = (type(sub) == 'table' and type(sub.active) == 'function' and sub:active() == true)
+        if not active then
+            local s = ok_call(D.on, name, fn, {{ owner = ADDON_ID, id = name, priority = 50 }})
+            if s then M.subs[name] = s end
+        end
+    end
+end
+
+-- ---------------------------------------------------------------- Frame Step
+local function step(dt)
+    dt = tonumber(dt) or 0
+    if dt < 0 then dt = 0 elseif dt > 1 then dt = 1 end
+    M.clock = M.clock + dt
+
+    if not M.options_bound then
+        bind_mod_options()
+    end
+
+    hub_tick()
+
+    -- Audio initialization / hot reload
+    if not M.audio_format_defined then
+        if init_audio_track() then
+            M.audio_format_defined = true
+        end
+    elseif CONFIG.hot_reload and M.clock >= M.next_hot_reload_clock then
+        M.next_hot_reload_clock = M.clock + 2.0
+        if log_dir then
+            local ini_p = log_dir .. '/STIM_MUSIC_CONFIG.ini'
+            local fp = get_file_fingerprint(ini_p)
+            if fp and fp ~= '' and fp ~= M.config_ini_fp then
+                M.config_ini_fp = fp
+                load_ini_config()
+                log_fmt('Hot reload: INI updated (vol=%d, stim_ms=%d, track=%s)',
+                    CONFIG.volume or 100, CONFIG.stim_ms or 6000, tostring(CONFIG.track))
+            end
+        end
+        local current_path = locate_music_file()
+        local current_fp = get_file_fingerprint(current_path)
+        if current_path ~= M.audio_track_path or current_fp ~= M.audio_track_fp then
+            log_fmt('Hot reload trigger: path=%s (fp=%s, prev_fp=%s)',
+                tostring(current_path), tostring(current_fp), tostring(M.audio_track_fp))
+            init_audio_track()
+        end
+    end
+
+    -- Process progressive audio uploads
+    step_audio_uploads()
+
+    -- Retry pending play if previous attempt was waiting for decoder / upload
+    if M.play_retry_idx and M.clock >= M.play_retry_clock and M.stim_active then
+        if M.clock <= M.stim_end_clock then
+            start_stim_segment(M.play_retry_idx)
+        else
+            log_fmt('Stim window ended before segment %d became ready (retried %d times)',
+                M.play_retry_idx, M.play_retries or 0)
+            M.play_retry_idx = nil
+            M.play_retries = 0
+        end
+    end
+
+    -- Gameplay polling through D.player()
+    local D = M.hub_ref
+    if D and type(D.player) == 'function' then
+        local p = ok_call(D.player)
+        if type(p) == 'table' and p.alive ~= false then
+            local stim_consumed = (p.stims and M.last_stims and p.stims < M.last_stims)
+            local health_gain = (p.health and M.last_health and (p.health - M.last_health) >= (CONFIG.min_heal or 1))
+            local stim_triggered = false
+            
+            if stim_consumed then
+                stim_triggered = true
+                M.last_stim_consumed_clock = M.clock
+                log_fmt('Stim consumed detected: %d -> %d', M.last_stims, p.stims)
+            elseif health_gain then
+                -- Prevent double-counting the health increase resulting from a consumed stim
+                if (M.clock - (M.last_stim_consumed_clock or 0)) > 1.5 then
+                    stim_triggered = true
+                    M.heals_count = M.heals_count + 1
+                    log_fmt('Health gain detected: +%d (%d -> %d)', p.health - M.last_health, M.last_health, p.health)
+                end
+            end
+            
+            M.last_stims = p.stims
+            M.last_health = p.health
+            M.last_alive = true
+
+            if stim_triggered and CONFIG.enabled then
+                local stim_duration = math.max(2.0, (CONFIG.stim_ms or 6000) / 1000)
+                if not M.stim_active then
+                    -- Fresh stim trigger: start playing current segment
+                    M.stim_active = true
+                    M.stim_end_clock = M.clock + stim_duration
+                    start_stim_segment(M.current_segment)
+                else
+                    -- Consecutive stim: extend overall stim duration without restarting/interrupting audio!
+                    local new_end = math.min(M.clock + 30.0, math.max(M.stim_end_clock, M.clock) + stim_duration)
+                    M.stim_end_clock = new_end
+                    log_fmt('Consecutive stim! Extended window +%.1fs (ends at %.1fs, %.1fs left)',
+                        stim_duration, M.stim_end_clock, M.stim_end_clock - M.clock)
+                    
+                    -- If audio was stopped or not currently playing, kickstart it:
+                    if not M.is_playing and not M.play_retry_idx then
+                        start_stim_segment(M.current_segment)
+                    end
+                end
+            end
+        elseif type(p) == 'table' and p.alive == false then
+            if M.last_alive then
+                M.last_alive = false
+                stop_stim_playback()
+            end
+        else
+            M.last_stims = nil
+            M.last_health = nil
+        end
+    end
+
+    -- Monitor active stim playback & continuous segment chaining
+    if M.stim_active and M.is_playing then
+        if M.clock >= M.stim_end_clock then
+            -- Entire stim effect ended
+            stop_stim_playback()
+        elseif M.clock >= (M.seg_end_clock - 0.02) then
+            -- Audio slice finished, but stim effect is still active! Chain into next slice seamlessly!
+            local prev, nxt = advance_to_next_segment()
+            log_fmt('Segment %d audio finished, stim active (%.1fs left) -> chaining segment %d',
+                prev, M.stim_end_clock - M.clock, nxt)
+            local expected_start = M.seg_end_clock
+            if start_stim_segment(nxt) then
+                M.seg_start_clock = expected_start
+                M.seg_end_clock = expected_start + M.seg_duration
+            end
+        end
+    end
+
+    -- Periodic status file write
+    if M.clock >= M.next_status_clock then
+        M.next_status_clock = M.clock + 2.0
+        write_status_snapshot()
+    end
+end
+
+-- ---------------------------------------------------------------- Lifecycle Hooks
+local prev_update = rawget(_G, 'update')
+local prev_shutdown = rawget(_G, 'shutdown')
+
+rawset(_G, 'update', function(dt, ...)
+    if type(prev_update) == 'function' then prev_update(dt, ...) end
+    local ok, err = pcall(step, dt)
+    if not ok then log_fmt('STEP_ERR: %s', tostring(err)) end
+end)
+
+rawset(_G, 'shutdown', function(...)
+    pcall(function()
+        M.active = false
+        stop_stim_playback()
+        local A = get_audio_service()
+        if A and type(A.release) == 'function' then
+            for _, ns in ipairs(NS_RING) do
+                pcall(A.stop, ns, ROLE)
+                pcall(A.release, ns)
+            end
+        end
+        unsubscribe_all()
+        if log_file then
+            log_file:close()
+            log_file = nil
+        end
+        if rawget(_G, KEY) == M then
+            rawset(_G, KEY, nil)
+        end
+    end)
+    if type(prev_shutdown) == 'function' then return prev_shutdown(...) end
+end)
+
+log_fmt('StimMusic v%s initialized successfully.', VERSION)
+
+return {{
+    installed = true,
+    name = ZH.mod_title,
+    version = VERSION,
+    author = 'kugua',
+    description = ZH.mod_desc,
+}}
+'''
+
+# 2. Write source file
+src_path = ROOT / 'Source/mods/kugua/stim_music.lua'
+src_path.parent.mkdir(parents=True, exist_ok=True)
+src_path.write_text(lua_template, encoding='ascii')
+print(f"Wrote {src_path} ({len(lua_template)} bytes)")
+
+# 3. Validate syntax with lupa
+import lupa
+lua = lupa.LuaRuntime(unpack_returned_tuples=False)
+try:
+    lua.execute(lua_template)
+    print("Lua syntax check: PASSED!")
+except Exception as e:
+    print(f"Lua syntax check: FAILED! {e}")
+    sys.exit(1)
+
+# 4. Pack into 9ba626afa44a3aa3.patch_0
+lua_bytes = lua_template.encode('ascii')
+body = struct.pack('<II', len(lua_bytes), 2) + lua_bytes
+archive_bytes = make_archive({resource_hash(RESOURCE): body})
+
+# Write to Addon/ and mod/
+addon_patch = ROOT / 'Addon/9ba626afa44a3aa3.patch_0'
+mod_patch = ROOT / 'mod/9ba626afa44a3aa3.patch_0'
+addon_patch.parent.mkdir(parents=True, exist_ok=True)
+mod_patch.parent.mkdir(parents=True, exist_ok=True)
+addon_patch.write_bytes(archive_bytes)
+mod_patch.write_bytes(archive_bytes)
+
+# Create 0-byte companion files
+for base in (addon_patch, mod_patch):
+    (base.parent / f"{base.name}.gpu_resources").write_bytes(b'')
+    (base.parent / f"{base.name}.stream").write_bytes(b'')
+
+print(f"Built archive: {addon_patch} ({len(archive_bytes)} bytes)")
+
+# 5. Run authentic loader acceptance verification
+names, rejected = loader_accept.scan_file(archive_bytes)
+print(f"Loader acceptance names: {names}")
+print(f"Loader acceptance rejected: {rejected}")
+if rejected or RESOURCE not in names:
+    print("LOADER ACCEPTANCE FAILED!")
+    sys.exit(1)
+print("LOADER ACCEPTANCE: 100% PASSED!")
+
+# 6. Update manifest.json
+manifest_data = {
+    "Version": 1,
+    "Guid": "c980dc93-4108-5742-80e4-28f6b06b928a",
+    "Name": f"StimMusic v{VERSION} (打针放音乐)",
+    "Description": "需要 MDL3 + HD2 Data Hub (0.3.0+) 前置。打针（回血）触发音乐播放，支持下次继续播放与音量调节。可在 ESC -> MDL 设置中调节选项。",
+    "Options": [
+        {
+            "Name": "StimMusic (打针放音乐)",
+            "Description": "需要 MDL3 + HD2 Data Hub (0.3.0+) 前置。打针（回血）触发音乐播放，支持下次继续播放与音量调节。可在 ESC -> MDL 设置中调节选项。",
+            "Include": [
+                "Addon"
+            ]
+        }
+    ]
+}
+import json
+(ROOT / 'manifest.json').write_text(json.dumps(manifest_data, indent=2, ensure_ascii=False), encoding='utf-8')
+print("Updated manifest.json")
+
+# 7. Create installable zip in dist/
+dist_dir = ROOT / 'dist'
+dist_dir.mkdir(parents=True, exist_ok=True)
+zip_path = dist_dir / f"StimMusic-{VERSION}.zip"
+with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+    zf.write(addon_patch, 'Addon/9ba626afa44a3aa3.patch_0')
+    zf.write(addon_patch.parent / f"{addon_patch.name}.gpu_resources", 'Addon/9ba626afa44a3aa3.patch_0.gpu_resources')
+    zf.write(addon_patch.parent / f"{addon_patch.name}.stream", 'Addon/9ba626afa44a3aa3.patch_0.stream')
+    zf.write(ROOT / 'manifest.json', 'manifest.json')
+    zf.write(ROOT / 'README.md', 'README.md')
+    if (ROOT / 'convert_track.cmd').exists():
+        zf.write(ROOT / 'convert_track.cmd', 'convert_track.cmd')
+    if (ROOT / 'convert_track.ps1').exists():
+        zf.write(ROOT / 'convert_track.ps1', 'convert_track.ps1')
+print(f"Packaged distribution zip: {zip_path} ({zip_path.stat().st_size} bytes)")
+
+# 8. Deploy directly to game directory if present
+game_data = Path(r'E:\SteamLibrary\steamapps\common\Helldivers 2\data')
+if game_data.exists():
+    target_patch = None
+    # 1) Check if an existing patch already contains RESOURCE (mods/kugua/stim_music)
+    for p_idx in range(16):
+        cand = game_data / f"9ba626afa44a3aa3.patch_{p_idx}"
+        if cand.is_file():
+            try:
+                names, _ = loader_accept.scan_file(cand.read_bytes())
+                if RESOURCE in names:
+                    target_patch = cand
+                    print(f"Found existing StimMusic patch slot: {cand}")
+                    break
+            except Exception:
+                pass
+
+    # 2) If not found, find the first available sequential patch slot
+    if not target_patch:
+        for p_idx in range(16):
+            cand = game_data / f"9ba626afa44a3aa3.patch_{p_idx}"
+            if not cand.exists():
+                target_patch = cand
+                print(f"Allocating new sequential patch slot: {cand}")
+                break
+
+    if target_patch:
+        target_patch.write_bytes(archive_bytes)
+        (target_patch.parent / f"{target_patch.name}.gpu_resources").write_bytes(b'')
+        (target_patch.parent / f"{target_patch.name}.stream").write_bytes(b'')
+        print(f"Directly updated live game patch: {target_patch}")
+
+# 9. Also synchronize HD2 Arsenal mod directory if it exists
+arsenal_mod_root = Path(r'C:\Users\kugua\AppData\Local\hd2arsenal\mods\StimMusic-2.0.0_AR956465')
+if arsenal_mod_root.exists():
+    arsenal_addon = arsenal_mod_root / 'Addon'
+    if arsenal_addon.exists():
+        (arsenal_addon / '9ba626afa44a3aa3.patch_0').write_bytes(archive_bytes)
+        (arsenal_addon / '9ba626afa44a3aa3.patch_0.gpu_resources').write_bytes(b'')
+        (arsenal_addon / '9ba626afa44a3aa3.patch_0.stream').write_bytes(b'')
+        print(f"Synchronized with HD2 Arsenal mod directory: {arsenal_addon}")
+    (arsenal_mod_root / 'convert_track.cmd').write_bytes((ROOT / 'convert_track.cmd').read_bytes())
+    (arsenal_mod_root / 'convert_track.ps1').write_bytes((ROOT / 'convert_track.ps1').read_bytes())
+    print(f"Synchronized converter scripts to Arsenal mod directory: {arsenal_mod_root}")
+
+# 10. Directly deploy conversion scripts to MDL dedicated directory and legacy directories
+deploy_dirs = [
+    Path(os.path.expandvars(r'%LOCALAPPDATA%\MDL\Helldivers2\StimMusic')),
+    Path(os.path.expandvars(r'%LOCALAPPDATA%\CowboyBingus\Helldivers2\StimMusic')),
+]
+for target_dir in deploy_dirs:
+    target_dir.mkdir(parents=True, exist_ok=True)
+    (target_dir / 'convert_track.cmd').write_bytes((ROOT / 'convert_track.cmd').read_bytes())
+    (target_dir / 'convert_track.ps1').write_bytes((ROOT / 'convert_track.ps1').read_bytes())
+    print(f"Directly deployed conversion scripts to: {target_dir}")
+
+print("ALL TASKS COMPLETED SUCCESSFULLY!")
