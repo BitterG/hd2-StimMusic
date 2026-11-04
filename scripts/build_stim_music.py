@@ -840,8 +840,19 @@ local function start_stim_segment(seg_idx)
         local retries = (M.play_retries or 0) + 1
         M.play_retries = retries
         if retries == 1 or retries % 10 == 0 then
-            log_fmt('Stim play retry for %s on %s (vol=%d, ok=%s, played=%s, retry #%d)',
-                key, ns, vol, tostring(ok), tostring(played), retries)
+            local r_ok, r_err = nil, nil
+            if type(A.ready) == 'function' then
+                local ok_call_r, is_r, why_not = pcall(A.ready, ns, key)
+                r_ok = ok_call_r and is_r
+                r_err = why_not
+            end
+            local st_ready = nil
+            if type(A.status) == 'function' then
+                local ok_s, st = pcall(A.status, ns)
+                if ok_s and type(st) == 'table' then st_ready = st.ready end
+            end
+            log_fmt('Stim play retry for %s on %s (vol=%d, ok=%s, played=%s, ready=%s, r_err=%s, st_ready=%s, retry #%d)',
+                key, ns, vol, tostring(ok), tostring(played), tostring(r_ok), tostring(r_err), tostring(st_ready), retries)
         end
         M.play_retry_idx = seg_idx
         M.play_retry_clock = M.clock + 0.05
