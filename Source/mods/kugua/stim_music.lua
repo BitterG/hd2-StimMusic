@@ -964,30 +964,12 @@ local function step_audio_uploads()
     -- Throttling: minimum 250ms between uploads to spread base64 encoding cost across frames
     if M.clock < (M.next_upload_clock or 0) then return end
     
-    -- Native status check: ensure previous upload has completed decoding in XAudio2
-    local prev_idx = M.next_upload_idx - 1
-    local prev_ready = true
-    if prev_idx >= 1 then
-        if type(A.status) == 'function' then
-            local ok_st, st = pcall(A.status, ns)
-            if ok_st and type(st) == 'table' and type(st.ready) == 'number' then
-                prev_ready = (st.ready >= prev_idx)
-            end
-        elseif type(A.ready) == 'function' then
-            local prev_key = 's' .. M.track_gen .. '_' .. prev_idx
-            local ok_r, is_r = pcall(A.ready, ns, prev_key)
-            prev_ready = ok_r and (is_r == true)
-        end
-    end
-    
-    if prev_ready then
-        local idx = M.next_upload_idx
-        if upload_single_segment(idx) then
-            M.next_upload_idx = idx + 1
-            M.next_upload_clock = M.clock + 0.25
-        else
-            M.next_upload_clock = M.clock + 0.5
-        end
+    local idx = M.next_upload_idx
+    if upload_single_segment(idx) then
+        M.next_upload_idx = idx + 1
+        M.next_upload_clock = M.clock + 0.25
+    else
+        M.next_upload_clock = M.clock + 0.5
     end
 end
 
@@ -1008,35 +990,8 @@ local function start_stim_segment(seg_idx)
     local vol = math.max(0, math.min(100, math.floor((CONFIG.volume or 100) + 0.5)))
     if vol <= 0 then return false end
     
-    -- Check if the asset has finished receiving & decoding in the native host
-    local ready = false
-    if M.using_default then
-        ready = true
-    elseif type(A.status) == 'function' then
-        local ok_st, st = pcall(A.status, ns)
-        if ok_st and type(st) == 'table' and type(st.ready) == 'number' then
-            ready = (st.ready >= seg_idx)
-        else
-            ready = (M.uploaded_segments[seg_idx] == true)
-        end
-    elseif type(A.ready) == 'function' then
-        local ok_r, is_r = pcall(A.ready, ns, key)
-        ready = ok_r and (is_r == true)
-    else
-        ready = (M.uploaded_segments[seg_idx] == true)
-    end
-    
-    if not ready then
-        local retries = (M.play_retries or 0) + 1
-        M.play_retries = retries
-        if retries == 1 or retries % 5 == 0 then
-            log_fmt('Stim segment %s not ready yet on %s (retrying, attempt #%d)', key, ns, retries)
-        end
-        M.play_retry_idx = seg_idx
-        M.play_retry_clock = M.clock + 0.1
-        return false
-    end
-    
+    -- In MDL3 API 1 (XAudio2), A.play accepts the cue if buffer is ready and a voice is free.
+    -- Directly calling A.play matches BFV and MeleeSFX implementations.
     local ok, played = pcall(A.play, ns, key, { role = ROLE, volume = vol })
     if ok and played == true then
         local stim_sec = math.max(2.0, (CONFIG.stim_ms or 6000) / 1000)
@@ -1054,12 +1009,12 @@ local function start_stim_segment(seg_idx)
     else
         local retries = (M.play_retries or 0) + 1
         M.play_retries = retries
-        if retries == 1 or retries % 5 == 0 then
-            log_fmt('Stim play failed for %s on %s (vol=%d, ok=%s, played=%s, retry #%d)',
+        if retries == 1 or retries % 10 == 0 then
+            log_fmt('Stim play retry for %s on %s (vol=%d, ok=%s, played=%s, retry #%d)',
                 key, ns, vol, tostring(ok), tostring(played), retries)
         end
         M.play_retry_idx = seg_idx
-        M.play_retry_clock = M.clock + 0.1
+        M.play_retry_clock = M.clock + 0.05
         return false
     end
 end
@@ -1398,7 +1353,7 @@ local function step(dt)
         if M.clock <= M.stim_end_clock then
             start_stim_segment(M.play_retry_idx)
         else
-            log_fmt('Stim window ended before segment %d became ready (retried %d times)',
+            log_fmt('Stim window ended before segment %d could play (retried %d times)',
                 M.play_retry_idx, M.play_retries or 0)
             M.play_retry_idx = nil
             M.play_retries = 0

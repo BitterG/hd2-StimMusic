@@ -106,7 +106,7 @@ class TestLuaRuntimeSimulation(unittest.TestCase):
                     return true
                 end,
                 status = function(ns)
-                    return { ready = #calls.audio_uploads, pool = 2 }
+                    return { ready = 0, pool = 2 }
                 end,
                 play = function(ns, key, opts)
                     calls.audio_plays[#calls.audio_plays + 1] = { ns = ns, key = key, opts = opts }
@@ -244,7 +244,7 @@ class TestLuaRuntimeSimulation(unittest.TestCase):
                     return true
                 end,
                 status = function(ns)
-                    return { ready = #calls.audio_uploads, pool = 2 }
+                    return { ready = 0, pool = 2 }
                 end,
                 play = function(ns, key, opts)
                     calls.audio_plays[#calls.audio_plays + 1] = { ns = ns, key = key, opts = opts }
@@ -361,7 +361,7 @@ class TestLuaRuntimeSimulation(unittest.TestCase):
                     return true
                 end,
                 status = function(ns)
-                    return { ready = #calls.audio_uploads, pool = 2 }
+                    return { ready = 0, pool = 2 }
                 end,
                 play = function(ns, key, opts)
                     calls.audio_plays[#calls.audio_plays + 1] = { ns = ns, key = key, opts = opts }
@@ -474,7 +474,7 @@ class TestLuaRuntimeSimulation(unittest.TestCase):
                     return true
                 end,
                 status = function(ns)
-                    return { ready = #calls.audio_uploads, pool = 2 }
+                    return { ready = 0, pool = 2 }
                 end,
                 play = function(ns, key, opts)
                     calls.audio_plays[#calls.audio_plays + 1] = { ns = ns, key = key, opts = opts }
@@ -614,7 +614,7 @@ class TestLuaRuntimeSimulation(unittest.TestCase):
                         return true
                     end,
                     status = function(ns)
-                        return { ready = #calls.audio_uploads, pool = 2 }
+                        return { ready = 0, pool = 2 }
                     end,
                     play = function(ns, key, opts)
                         calls.audio_plays[#calls.audio_plays + 1] = { ns = ns, key = key, opts = opts }
