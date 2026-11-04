@@ -804,6 +804,171 @@ class TestLuaRuntimeSimulation(unittest.TestCase):
             if shutdown_fn:
                 shutdown_fn()
 
+    def test_fade_in_and_fade_out_dsp_and_menu_options(self):
+        import base64
+
+        test_dir = ROOT / 'Source/mods/kugua'
+        test_wav = test_dir / 'test_fade_track.wav'
+
+        # Generate a test WAV: 10s of 22050Hz mono 16-bit PCM constant tone (amplitude 20000)
+        rate = 22050
+        duration = 10.0
+        n_samples = int(rate * duration)
+        raw_pcm = bytearray()
+        for _ in range(n_samples):
+            raw_pcm.extend(struct.pack('<h', 20000))
+
+        # Build WAV with RIFF header
+        wav_bytes = bytearray()
+        wav_bytes.extend(b'RIFF')
+        wav_bytes.extend(struct.pack('<I', 36 + len(raw_pcm)))
+        wav_bytes.extend(b'WAVE')
+        wav_bytes.extend(b'fmt ')
+        wav_bytes.extend(struct.pack('<I', 16))
+        wav_bytes.extend(struct.pack('<HHIIHH', 1, 1, rate, rate * 2, 2, 16))
+        wav_bytes.extend(b'data')
+        wav_bytes.extend(struct.pack('<I', len(raw_pcm)))
+        wav_bytes.extend(raw_pcm)
+
+        test_wav.write_bytes(wav_bytes)
+
+        try:
+            lua = lupa.LuaRuntime(unpack_returned_tuples=False)
+            env_setup = f"""
+            local calls = {{
+                audio_plays = {{}},
+                audio_stops = {{}},
+                audio_uploads = {{}},
+                options = {{}},
+            }}
+
+            local mock_player_data = {{
+                health = 80,
+                health_max = 100,
+                stims = 4,
+                alive = true,
+            }}
+
+            _G.MDL3 = {{
+                audio = {{
+                    api = 1,
+                    define_format = function(ns, fmt) return true end,
+                    pool = function(ns, roles) return true end,
+                    upload = function(ns, key, b64)
+                        calls.audio_uploads[key] = b64
+                        return true
+                    end,
+                    status = function(ns) return {{ ready = 1, pool = 2 }} end,
+                    play = function(ns, key, opts)
+                        table.insert(calls.audio_plays, {{ key = key, opts = opts }})
+                        return true
+                    end,
+                    stop = function(ns, role)
+                        table.insert(calls.audio_stops, {{ role = role }})
+                        return true
+                    end,
+                }},
+                mod_options_menu = {{
+                    register_option = function(id, spec)
+                        calls.options[id] = {{ spec = spec, cb = nil }}
+                        return true
+                    end,
+                    on_change = function(id, cb)
+                        if calls.options[id] then
+                            calls.options[id].cb = cb
+                        end
+                    end,
+                    get = function(id) return nil end,
+                }},
+                locale = 'zh_CN',
+            }}
+
+            _G.HD2Data = {{
+                api = 1,
+                version = '0.3.0',
+                player = function() return mock_player_data end,
+                on = function() return {{ active = function() return true end }} end,
+            }}
+
+            return calls, mock_player_data
+            """
+
+            calls, player = lua.execute(env_setup)
+            src = (ROOT / 'Source/mods/kugua/stim_music.lua').read_text(encoding='ascii')
+            lua.execute(src)
+            M = lua.globals()['__KUGUA_STIM_MUSIC']
+            step_fn = lua.globals().update
+
+            # Call step once to bind options
+            step_fn(0.1)
+
+            # 1. Verify ModOptionsMenu options for fade_in_ms and fade_out_ms
+            self.assertIn('kugua_stim_music.fade_in_ms', calls.options)
+            self.assertIn('kugua_stim_music.fade_out_ms', calls.options)
+            opt_in = calls.options['kugua_stim_music.fade_in_ms']
+            opt_out = calls.options['kugua_stim_music.fade_out_ms']
+            self.assertEqual(opt_in.spec.type, 'slider')
+            self.assertEqual(opt_out.spec.type, 'slider')
+            self.assertEqual(opt_in.spec.default, 500)
+            self.assertEqual(opt_out.spec.default, 1500)
+
+            # Set track to test_fade_track.wav via menu
+            track_opt = calls.options['kugua_stim_music.track']
+            track_opt.cb(str(test_wav))
+            step_fn(0.1)
+
+            # Adjust fade_in_ms to 1000ms (1.0s) and fade_out_ms to 2000ms (2.0s)
+            opt_in.cb(1000)
+            opt_out.cb(2000)
+            step_fn(0.1)
+
+            # 2. Player stims: drops 4 -> 3
+            player.stims = 3
+            step_fn(0.1)
+            self.assertEqual(len(calls.audio_plays), 1)
+            play_key = calls.audio_plays[1].key
+            uploaded_b64 = calls.audio_uploads[play_key]
+            self.assertIsNotNone(uploaded_b64)
+            pcm_bytes = base64.b64decode(uploaded_b64)
+
+            # Check samples:
+            # First sample must be faded in from ~0
+            first_s = struct.unpack_from('<h', pcm_bytes, 0)[0]
+            self.assertLess(abs(first_s), 100, f"First sample should be close to 0, got {first_s}")
+
+            # Sample at 1.0s (after fade in) must be full amplitude (~20000)
+            mid_sample_idx = rate * 1 * 2  # 1.0s * 2 bytes
+            s_at_1s = struct.unpack_from('<h', pcm_bytes, mid_sample_idx)[0]
+            self.assertAlmostEqual(s_at_1s, 20000, delta=100)
+
+            # Sample at end of slice must be faded out to ~0
+            last_s = struct.unpack_from('<h', pcm_bytes, len(pcm_bytes) - 2)[0]
+            self.assertLess(abs(last_s), 100, f"Last sample should be close to 0, got {last_s}")
+
+            # 3. Test disabling fade: set fade_in_ms = 0, fade_out_ms = 0
+            opt_in.cb(0)
+            opt_out.cb(0)
+            step_fn(0.1)
+
+            # Advance past previous stim window
+            for _ in range(70):
+                step_fn(0.1)
+
+            # Next stim without fade
+            player.stims = 2
+            step_fn(0.1)
+            self.assertEqual(len(calls.audio_plays), 2)
+            play_key_2 = calls.audio_plays[2].key
+            raw_no_fade = base64.b64decode(calls.audio_uploads[play_key_2])
+            first_s2 = struct.unpack_from('<h', raw_no_fade, 0)[0]
+            last_s2 = struct.unpack_from('<h', raw_no_fade, len(raw_no_fade) - 2)[0]
+            self.assertEqual(first_s2, 20000, "With fade_in=0, first sample must be full amplitude")
+            self.assertEqual(last_s2, 20000, "With fade_out=0, last sample must be full amplitude")
+
+        finally:
+            if test_wav.exists():
+                test_wav.unlink()
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,7 +1,7 @@
 {
   "Version": 1,
   "Guid": "c980dc93-4108-5742-80e4-28f6b06b928a",
-  "Name": "StimMusic v2.1.1 (打针放音乐)",
+  "Name": "StimMusic v2.2.0 (打针放音乐)",
   "Description": "需要 MDL3 + HD2 Data Hub (0.3.0+) 前置。打针（回血）触发音乐播放，支持毫秒级动态断点接续与音量调节。可在 ESC -> MDL 设置中调节选项。",
   "Options": [
     {

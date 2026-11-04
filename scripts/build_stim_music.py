@@ -20,7 +20,7 @@ from archive import make_archive, resource_hash
 import loader_accept
 
 RESOURCE = 'mods/kugua/stim_music'
-VERSION = '2.1.1'
+VERSION = '2.2.0'
 
 print(f"Building {RESOURCE} v{VERSION}...")
 
@@ -98,6 +98,10 @@ local ZH = {{
     opt_volume_desc = '\\233\\146\\136\\229\\137\\130\\233\\159\\179\\228\\185\\144\\230\\146\\173\\230\\148\\190\\233\\159\\179\\233\\135\\143 (0-100)',
     opt_stim_ms = '\\233\\146\\136\\229\\137\\130\\230\\151\\182\\233\\149\\191 (Stim Length ms)',
     opt_stim_ms_desc = '\\229\\141\\149\\230\\172\\161\\230\\137\\147\\233\\146\\136\\231\\148\\159\\230\\149\\136\\230\\140\\129\\231\\187\\173\\230\\151\\182\\233\\151\\180\\228\\184\\142\\233\\159\\179\\228\\185\\144\\230\\146\\173\\230\\148\\190\\231\\170\\151\\229\\143\\163\\239\\188\\136\\230\\175\\171\\231\\167\\146\\239\\188\\137\\227\\128\\130\\232\\176\\131\\230\\149\\180\\229\\144\\142\\228\\187\\141\\228\\188\\154\\230\\151\\160\\231\\188\\157\\230\\142\\165\\231\\187\\173\\228\\184\\138\\230\\172\\161\\230\\150\\173\\231\\130\\185\\227\\128\\130',
+    opt_fade_in = '\\230\\184\\144\\229\\133\\165\\230\\151\\182\\233\\149\\191\\32\\40\\70\\97\\100\\101\\32\\73\\110\\32\\109\\115\\41',
+    opt_fade_in_desc = '\\233\\159\\179\\228\\185\\144\\229\\188\\128\\229\\167\\139\\230\\146\\173\\230\\148\\190\\230\\151\\182\\231\\154\\132\\230\\183\\161\\229\\133\\165\\230\\151\\182\\233\\151\\180\\239\\188\\136\\230\\175\\171\\231\\167\\146\\239\\188\\137\\239\\188\\140\\48\\228\\184\\186\\231\\171\\139\\229\\141\\179\\229\\133\\168\\233\\159\\179\\233\\135\\143',
+    opt_fade_out = '\\230\\184\\144\\229\\135\\186\\230\\151\\182\\233\\149\\191\\32\\40\\70\\97\\100\\101\\32\\79\\117\\116\\32\\109\\115\\41',
+    opt_fade_out_desc = '\\233\\146\\136\\229\\137\\130\\230\\149\\136\\230\\158\\156\\231\\187\\147\\230\\157\\159\\229\\137\\141\\231\\154\\132\\230\\183\\161\\229\\135\\186\\230\\151\\182\\233\\151\\180\\239\\188\\136\\230\\175\\171\\231\\167\\146\\239\\188\\137\\239\\188\\140\\48\\228\\184\\186\\231\\155\\180\\230\\142\\165\\230\\136\\170\\230\\150\\173',
     opt_min_heal = '\\230\\156\\128\\229\\176\\143\\229\\155\\158\\232\\161\\128\\233\\135\\143\\229\\136\\164\\229\\174\\154',
     opt_min_heal_desc = '\\229\\141\\149\\230\\172\\161\\229\\136\\164\\229\\174\\154\\233\\146\\136\\229\\137\\130\\231\\148\\159\\230\\149\\136\\231\\154\\132\\230\\156\\128\\229\\176\\143\\229\\155\\158\\232\\161\\128\\230\\149\\176\\229\\128\\188 (1-50)',
     opt_hot_reload = '\\232\\135\\170\\229\\138\\168\\230\\163\\128\\230\\181\\139\\230\\155\\180\\230\\150\\176 (Hot Reload)',
@@ -114,6 +118,10 @@ local EN = {{
     opt_volume_desc = 'Playback volume for stim music (0-100).',
     opt_stim_ms = 'Stim Length (ms)',
     opt_stim_ms_desc = 'Stim duration window and playback time per heal (ms). Resumes smoothly from breakpoint even when adjusted.',
+    opt_fade_in = 'Fade In (ms)',
+    opt_fade_in_desc = 'Volume fade-in duration when music starts (ms). 0 = full volume immediately.',
+    opt_fade_out = 'Fade Out (ms)',
+    opt_fade_out_desc = 'Volume fade-out duration before stim ends (ms). 0 = hard cut.',
     opt_min_heal = 'Minimum Heal Threshold',
     opt_min_heal_desc = 'Minimum health increase to count as stim effect (1-50).',
     opt_hot_reload = 'Hot Reload',
@@ -182,6 +190,8 @@ local CONFIG = {{
     enabled = true,
     volume = 100,
     stim_ms = 6000,
+    fade_in_ms = 500,
+    fade_out_ms = 1500,
     min_heal = 1,
     hot_reload = true,
     track = 'stim_music.wav',
@@ -224,6 +234,7 @@ local M = {{
     
     -- Stim effect & playback timing:
     stim_active = false,
+    stim_extended = false,
     is_playing = false,
     stim_end_clock = 0,
     play_start_clock = 0,
@@ -279,6 +290,8 @@ local function load_ini_config()
             wf:write('enabled = 1\\n')
             wf:write('volume = 100\\n')
             wf:write('stim_ms = 6000\\n')
+            wf:write('fade_in_ms = 500\\n')
+            wf:write('fade_out_ms = 1500\\n')
             wf:write('min_heal = 1\\n')
             wf:write('hot_reload = 1\\n')
             wf:write('track = stim_music.wav\\n')
@@ -298,6 +311,12 @@ local function load_ini_config()
             elseif k == 'stim_ms' then
                 local val = tonumber(v)
                 if val then CONFIG.stim_ms = math.max(1000, math.min(30000, math.floor(val + 0.5))) end
+            elseif k == 'fade_in_ms' or k == 'fade_in' then
+                local val = tonumber(v)
+                if val then CONFIG.fade_in_ms = math.max(0, math.min(5000, math.floor(val + 0.5))) end
+            elseif k == 'fade_out_ms' or k == 'fade_out' then
+                local val = tonumber(v)
+                if val then CONFIG.fade_out_ms = math.max(0, math.min(10000, math.floor(val + 0.5))) end
             elseif k == 'min_heal' then
                 local val = tonumber(v)
                 if val then CONFIG.min_heal = math.max(0, math.min(100, math.floor(val + 0.5))) end
@@ -319,6 +338,8 @@ local function persist_ini_config()
     f:write('enabled = ', CONFIG.enabled and '1' or '0', '\\n')
     f:write('volume = ', tostring(math.floor(CONFIG.volume or 100)), '\\n')
     f:write('stim_ms = ', tostring(math.floor(CONFIG.stim_ms or 6000)), '\\n')
+    f:write('fade_in_ms = ', tostring(math.floor(CONFIG.fade_in_ms or 500)), '\\n')
+    f:write('fade_out_ms = ', tostring(math.floor(CONFIG.fade_out_ms or 1500)), '\\n')
     f:write('min_heal = ', tostring(math.floor(CONFIG.min_heal or 1)), '\\n')
     f:write('hot_reload = ', CONFIG.hot_reload and '1' or '0', '\\n')
     f:write('track = ', tostring(CONFIG.track or 'stim_music.wav'), '\\n')
@@ -456,6 +477,115 @@ local function pack32(v)
     return string.char(b0, b1, b2, b3)
 end
 
+local function apply_pcm_fade(raw, channels, rate, fade_in_sec, fade_out_sec)
+    local floor = math.floor
+    local byte = string.byte
+    local char = string.char
+    
+    local bytes_per_sample = 2
+    local frame_size = (channels or 1) * bytes_per_sample
+    local total_len = #raw
+    local total_frames = floor(total_len / frame_size)
+    if total_frames <= 0 then return raw end
+    
+    local in_frames = floor((fade_in_sec or 0) * rate)
+    local out_frames = floor((fade_out_sec or 0) * rate)
+    
+    if in_frames > total_frames then in_frames = total_frames end
+    if out_frames > total_frames then out_frames = total_frames end
+    if (in_frames + out_frames) > total_frames and total_frames > 0 then
+        local ratio = total_frames / (in_frames + out_frames)
+        in_frames = floor(in_frames * ratio)
+        out_frames = total_frames - in_frames
+    end
+    
+    if in_frames <= 0 and out_frames <= 0 then
+        return raw
+    end
+    
+    local out_parts = {{}}
+    local part_n = 0
+    
+    if in_frames > 0 then
+        local in_t = {{}}
+        for f = 1, in_frames do
+            local gain = f / in_frames
+            local base = (f - 1) * frame_size + 1
+            if channels == 1 then
+                local b0, b1 = byte(raw, base, base + 1)
+                local s = b0 + b1 * 256
+                if s >= 32768 then s = s - 65536 end
+                s = floor(s * gain + 0.5)
+                if s < -32768 then s = -32768 elseif s > 32767 then s = 32767 end
+                if s < 0 then s = s + 65536 end
+                in_t[f] = char(s % 256, floor(s / 256) % 256)
+            else
+                local b0, b1, b2, b3 = byte(raw, base, base + 3)
+                local s1 = b0 + b1 * 256
+                if s1 >= 32768 then s1 = s1 - 65536 end
+                s1 = floor(s1 * gain + 0.5)
+                if s1 < -32768 then s1 = -32768 elseif s1 > 32767 then s1 = 32767 end
+                if s1 < 0 then s1 = s1 + 65536 end
+                
+                local s2 = b2 + b3 * 256
+                if s2 >= 32768 then s2 = s2 - 65536 end
+                s2 = floor(s2 * gain + 0.5)
+                if s2 < -32768 then s2 = -32768 elseif s2 > 32767 then s2 = 32767 end
+                if s2 < 0 then s2 = s2 + 65536 end
+                
+                in_t[f] = char(s1 % 256, floor(s1 / 256) % 256, s2 % 256, floor(s2 / 256) % 256)
+            end
+        end
+        part_n = part_n + 1
+        out_parts[part_n] = table.concat(in_t)
+    end
+    
+    local mid_start_byte = in_frames * frame_size + 1
+    local mid_end_byte = (total_frames - out_frames) * frame_size
+    if mid_start_byte <= mid_end_byte then
+        part_n = part_n + 1
+        out_parts[part_n] = raw:sub(mid_start_byte, mid_end_byte)
+    end
+    
+    if out_frames > 0 then
+        local out_t = {{}}
+        local start_frame = total_frames - out_frames + 1
+        for f = 1, out_frames do
+            local gain = (out_frames - f) / out_frames
+            local cur_frame = start_frame + f - 1
+            local base = (cur_frame - 1) * frame_size + 1
+            if channels == 1 then
+                local b0, b1 = byte(raw, base, base + 1)
+                local s = b0 + b1 * 256
+                if s >= 32768 then s = s - 65536 end
+                s = floor(s * gain + 0.5)
+                if s < -32768 then s = -32768 elseif s > 32767 then s = 32767 end
+                if s < 0 then s = s + 65536 end
+                out_t[f] = char(s % 256, floor(s / 256) % 256)
+            else
+                local b0, b1, b2, b3 = byte(raw, base, base + 3)
+                local s1 = b0 + b1 * 256
+                if s1 >= 32768 then s1 = s1 - 65536 end
+                s1 = floor(s1 * gain + 0.5)
+                if s1 < -32768 then s1 = -32768 elseif s1 > 32767 then s1 = 32767 end
+                if s1 < 0 then s1 = s1 + 65536 end
+                
+                local s2 = b2 + b3 * 256
+                if s2 >= 32768 then s2 = s2 - 65536 end
+                s2 = floor(s2 * gain + 0.5)
+                if s2 < -32768 then s2 = -32768 elseif s2 > 32767 then s2 = 32767 end
+                if s2 < 0 then s2 = s2 + 65536 end
+                
+                out_t[f] = char(s1 % 256, floor(s1 / 256) % 256, s2 % 256, floor(s2 / 256) % 256)
+            end
+        end
+        part_n = part_n + 1
+        out_parts[part_n] = table.concat(out_t)
+    end
+    
+    return table.concat(out_parts)
+end
+
 local DEFAULT_WFX_B64 = '{default_fmt_b64}'
 local DEFAULT_AUDIO_B64 = 
 {b64_literal}
@@ -539,7 +669,7 @@ local function parse_wav(path)
     }}
 end
 
-local function read_wav_slice(info, start_sec, duration_sec)
+local function read_wav_slice(info, start_sec, duration_sec, fade_in_sec, fade_out_sec)
     local f = io.open(info.path, 'rb')
     if not f then return nil, 0 end
     local start_byte = math.floor(start_sec * info.avg)
@@ -558,6 +688,11 @@ local function read_wav_slice(info, start_sec, duration_sec)
     local raw = f:read(slice_bytes)
     f:close()
     if not raw or #raw < slice_bytes then return nil, 0 end
+    
+    if info.tag == 1 and info.bits == 16 then
+        raw = apply_pcm_fade(raw, info.channels, info.rate, fade_in_sec, fade_out_sec)
+    end
+    
     local actual_duration = slice_bytes / info.avg
     return b64_encode(raw), actual_duration
 end
@@ -672,12 +807,17 @@ local function probe_audio_api(A, ns)
     log_fmt('==================================')
 end
 
-local function prepare_cue_for_pos(target_pos, req_duration)
+local function prepare_cue_for_pos(target_pos, req_duration, do_fade_in, do_fade_out)
     local A = get_audio_service()
     local ns = M.current_ns
     if not A or not ns then return nil, 0 end
 
     local stim_sec = req_duration or math.max(1.0, (CONFIG.stim_ms or 6000) / 1000)
+    if do_fade_in == nil then do_fade_in = true end
+    if do_fade_out == nil then do_fade_out = true end
+    
+    local in_sec = do_fade_in and math.max(0, (CONFIG.fade_in_ms or 500) / 1000) or 0
+    local out_sec = do_fade_out and math.max(0, (CONFIG.fade_out_ms or 1500) / 1000) or 0
     
     if M.using_default or not M.audio_info then
         M.cue_idx = (M.cue_idx or 0) + 1
@@ -695,11 +835,11 @@ local function prepare_cue_for_pos(target_pos, req_duration)
     end
 
     local slice_dur = math.min(stim_sec, total_dur - target_pos)
-    local b64_data, actual_dur = read_wav_slice(M.audio_info, target_pos, slice_dur)
+    local b64_data, actual_dur = read_wav_slice(M.audio_info, target_pos, slice_dur, in_sec, out_sec)
     if not b64_data or actual_dur <= 0 then
         target_pos = 0.0
         slice_dur = math.min(stim_sec, total_dur)
-        b64_data, actual_dur = read_wav_slice(M.audio_info, 0.0, slice_dur)
+        b64_data, actual_dur = read_wav_slice(M.audio_info, 0.0, slice_dur, in_sec, out_sec)
     end
     if not b64_data then return nil, 0 end
 
@@ -734,6 +874,7 @@ local function init_audio_track()
     
     M.track_gen = (M.track_gen or 0) + 1
     M.stim_active = false
+    M.stim_extended = false
     M.is_playing = false
     M.track_pos = 0.0
     M.play_start_clock = 0.0
@@ -771,7 +912,7 @@ local function init_audio_track()
             log_fmt('Audio track loaded: %s on ns=%s (fmt=%s, gen=%d, %.1fs, %d channels, %d Hz)',
                 path, current_ns, fmt_name, M.track_gen, info.duration, info.channels, info.rate)
             
-            local key, dur, ns, pos = prepare_cue_for_pos(0.0)
+            local key, dur, ns, pos = prepare_cue_for_pos(0.0, nil, true, true)
             if key then
                 M.prepared_key = key
                 M.prepared_dur = dur
@@ -808,7 +949,7 @@ local function init_audio_track()
 end
 
 -- ---------------------------------------------------------------- Stim Music Actions
-local function start_stim_playback()
+local function start_stim_playback(is_chain)
     if not CONFIG.enabled then return false end
     local A = get_audio_service()
     if not A then return false end
@@ -817,7 +958,7 @@ local function start_stim_playback()
     if vol <= 0 then return false end
     
     local key, dur, ns, actual_pos
-    if M.prepared_key and M.prepared_ns == M.current_ns and math.abs((M.prepared_pos or 0) - (M.track_pos or 0)) < 0.05 then
+    if not is_chain and M.prepared_key and M.prepared_ns == M.current_ns and math.abs((M.prepared_pos or 0) - (M.track_pos or 0)) < 0.05 then
         key = M.prepared_key
         dur = M.prepared_dur
         ns = M.prepared_ns
@@ -827,7 +968,12 @@ local function start_stim_playback()
         M.prepared_ns = nil
         M.prepared_pos = nil
     else
-        key, dur, ns, actual_pos = prepare_cue_for_pos(M.track_pos or 0.0)
+        local req_dur = nil
+        if is_chain and M.stim_end_clock and M.stim_end_clock > M.clock then
+            req_dur = math.max(1.0, math.min(10.0, M.stim_end_clock - M.clock))
+        end
+        local do_in = not is_chain
+        key, dur, ns, actual_pos = prepare_cue_for_pos(M.track_pos or 0.0, req_dur, do_in, true)
     end
     
     if not key or not ns then
@@ -848,8 +994,8 @@ local function start_stim_playback()
         M.stims_count = M.stims_count + 1
         local total_dur = M.audio_info and M.audio_info.duration or (M.using_default and 4.0 or 0.0)
         M.last_status_verdict = string.format('PLAYING - at %.1fs / %.1fs (vol=%d%%)', M.play_start_pos, total_dur, vol)
-        log_fmt('Stim music started: %s on %s from pos=%.2fs (vol=%d, dur=%.1fs, stim#=%d)',
-            key, ns, M.play_start_pos, vol, dur, M.stims_count)
+        log_fmt('Stim music started: %s on %s from pos=%.2fs (vol=%d, dur=%.1fs, stim#=%d, chain=%s)',
+            key, ns, M.play_start_pos, vol, dur, M.stims_count, tostring(is_chain == true))
         return true
     else
         M.is_playing = false
@@ -887,6 +1033,7 @@ local function stop_stim_playback(reason)
     end
     
     M.stim_active = false
+    M.stim_extended = false
     M.is_playing = false
     M.play_retry_key = nil
     M.play_retries = 0
@@ -923,6 +1070,8 @@ local function write_status_snapshot()
     f:write('revision=', VERSION, '\\n')
     f:write('enabled=', tostring(CONFIG.enabled), '\\n')
     f:write('stim_ms=', tostring(CONFIG.stim_ms), '\\n')
+    f:write('fade_in_ms=', tostring(CONFIG.fade_in_ms), '\\n')
+    f:write('fade_out_ms=', tostring(CONFIG.fade_out_ms), '\\n')
     f:write('volume=', tostring(CONFIG.volume), '\\n')
     f:write('min_heal=', tostring(CONFIG.min_heal), '\\n')
     f:write('hot_reload=', tostring(CONFIG.hot_reload), '\\n')
@@ -1067,6 +1216,40 @@ local function bind_mod_options()
                     log_fmt('Live stim end adjusted to clock=%.2f (%.2fs left)',
                         M.stim_end_clock, math.max(0, M.stim_end_clock - M.clock))
                 end
+                M.prepared_key = nil
+                write_status_snapshot()
+                persist_ini_config()
+            end
+        end
+    end)
+
+    reg('fade_in_ms', {{
+        type = 'slider', min = 0, max = 3000, step = 100, default = CONFIG.fade_in_ms,
+        label = L('opt_fade_in'), description = L('opt_fade_in_desc'),
+    }}, function(v)
+        local num = tonumber(v)
+        if num then
+            num = math.max(0, math.min(5000, math.floor(num + 0.5)))
+            if num ~= CONFIG.fade_in_ms then
+                CONFIG.fade_in_ms = num
+                log_fmt('Fade-in duration set to %dms', CONFIG.fade_in_ms)
+                M.prepared_key = nil
+                write_status_snapshot()
+                persist_ini_config()
+            end
+        end
+    end)
+
+    reg('fade_out_ms', {{
+        type = 'slider', min = 0, max = 4000, step = 100, default = CONFIG.fade_out_ms,
+        label = L('opt_fade_out'), description = L('opt_fade_out_desc'),
+    }}, function(v)
+        local num = tonumber(v)
+        if num then
+            num = math.max(0, math.min(10000, math.floor(num + 0.5)))
+            if num ~= CONFIG.fade_out_ms then
+                CONFIG.fade_out_ms = num
+                log_fmt('Fade-out duration set to %dms', CONFIG.fade_out_ms)
                 M.prepared_key = nil
                 write_status_snapshot()
                 persist_ini_config()
@@ -1253,7 +1436,7 @@ local function step(dt)
     -- Step 2: Idle pre-upload: prepare next slice buffer while player is running around
     if not M.stim_active and not M.is_playing and M.audio_info and not M.using_default then
         if not M.prepared_key and M.clock >= (M.next_prepare_clock or 0) then
-            local key, dur, ns, pos = prepare_cue_for_pos(M.track_pos or 0.0)
+            local key, dur, ns, pos = prepare_cue_for_pos(M.track_pos or 0.0, nil, true, true)
             if key then
                 M.prepared_key = key
                 M.prepared_dur = dur
@@ -1292,21 +1475,36 @@ local function step(dt)
 
             if stim_triggered and CONFIG.enabled then
                 local stim_duration = math.max(1.0, (CONFIG.stim_ms or 6000) / 1000)
+                local fade_out_sec = math.max(0, (CONFIG.fade_out_ms or 1500) / 1000)
+                local chain_lead = math.min((M.cue_duration or stim_duration) * 0.4, fade_out_sec) + 0.05
+                
                 if not M.stim_active then
                     -- Fresh stim trigger: start playing from current track_pos
                     M.stim_active = true
+                    M.stim_extended = false
                     M.stim_end_clock = M.clock + stim_duration
-                    start_stim_playback()
+                    start_stim_playback(false)
                 else
                     -- Consecutive stim: extend overall stim duration without restarting/interrupting audio!
                     local new_end = math.min(M.clock + 30.0, math.max(M.stim_end_clock, M.clock) + stim_duration)
                     M.stim_end_clock = new_end
+                    M.stim_extended = true
                     log_fmt('Consecutive stim! Extended window +%.1fs (ends at %.1fs, %.1fs left)',
                         stim_duration, M.stim_end_clock, M.stim_end_clock - M.clock)
                     
                     -- If audio was stopped or not currently playing, kickstart it:
                     if not M.is_playing and not M.play_retry_key then
-                        start_stim_playback()
+                        start_stim_playback(false)
+                    elseif M.is_playing and M.cue_duration and (M.clock >= (M.play_start_clock + M.cue_duration - chain_lead)) then
+                        -- Player stimmed while music is already in fade-out tail: chain immediately to restore volume!
+                        local elapsed = math.max(0.0, M.clock - M.play_start_clock)
+                        local total_dur = M.audio_info and M.audio_info.duration or (M.using_default and 4.0 or 0.0)
+                        if total_dur > 0 then
+                            M.track_pos = ((M.play_start_pos or 0.0) + elapsed) % total_dur
+                        end
+                        M.is_playing = false
+                        M.stim_extended = false
+                        start_stim_playback(false)
                     end
                 end
             end
@@ -1323,11 +1521,29 @@ local function step(dt)
 
     -- Monitor active stim playback & continuous chaining
     if M.stim_active and M.is_playing then
+        local fade_out_sec = math.max(0, (CONFIG.fade_out_ms or 1500) / 1000)
+        local chain_lead = math.min(M.cue_duration * 0.4, fade_out_sec) + 0.05
+        
         if M.clock >= M.stim_end_clock then
             -- Entire stim effect ended
             stop_stim_playback('stim_window_end')
+        elseif M.stim_extended and (M.stim_end_clock - M.clock) > 0.1 and (M.clock >= (M.play_start_clock + M.cue_duration - chain_lead)) then
+            -- Stim was extended! Chain into next slice before current slice drops into fade-out!
+            local elapsed = math.max(0.0, M.clock - M.play_start_clock)
+            local total_dur = M.audio_info and M.audio_info.duration or (M.using_default and 4.0 or 0.0)
+            if total_dur > 0 then
+                M.track_pos = ((M.play_start_pos or 0.0) + elapsed) % total_dur
+            else
+                M.track_pos = 0.0
+            end
+            M.is_playing = false
+            M.stim_extended = false
+            
+            log_fmt('Extended stim -> chaining next slice at %.2fs before fade-out (%.1fs left)',
+                M.track_pos, M.stim_end_clock - M.clock)
+            start_stim_playback(true)
         elseif (M.stim_end_clock - M.clock) > 0.1 and M.clock >= (M.play_start_clock + M.cue_duration - 0.05) then
-            -- Audio slice finished, but stim effect is still active! Chain into next slice seamlessly!
+            -- Normal cue end chaining
             local elapsed = M.cue_duration
             local total_dur = M.audio_info and M.audio_info.duration or (M.using_default and 4.0 or 0.0)
             if total_dur > 0 then
@@ -1336,10 +1552,11 @@ local function step(dt)
                 M.track_pos = 0.0
             end
             M.is_playing = false
+            M.stim_extended = false
             
             log_fmt('Audio cue finished, stim active (%.1fs left) -> chaining next slice at %.2fs',
                 M.stim_end_clock - M.clock, M.track_pos)
-            start_stim_playback()
+            start_stim_playback(true)
         end
     end
 
