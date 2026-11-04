@@ -1661,11 +1661,11 @@ manifest_data = {
     "Version": 1,
     "Guid": "c980dc93-4108-5742-80e4-28f6b06b928a",
     "Name": f"StimMusic v{VERSION} (打针放音乐)",
-    "Description": "需要 MDL3 + HD2 Data Hub (0.3.0+) 前置。打针（回血）触发音乐播放，支持毫秒级动态断点接续与音量调节。可在 ESC -> MDL 设置中调节选项。",
+    "Description": "需要 MDL3 + HD2 Data Hub (0.3.0+) 前置。打针（回血）触发音乐播放，支持平滑渐入渐出、毫秒级动态断点接续与音量调节。可在 ESC -> MDL 设置中调节选项。",
     "Options": [
         {
             "Name": "StimMusic (打针放音乐)",
-            "Description": "需要 MDL3 + HD2 Data Hub (0.3.0+) 前置。打针（回血）触发音乐播放，支持毫秒级动态断点接续与音量调节。可在 ESC -> MDL 设置中调节选项。",
+            "Description": "需要 MDL3 + HD2 Data Hub (0.3.0+) 前置。打针（回血）触发音乐播放，支持平滑渐入渐出、毫秒级动态断点接续与音量调节。可在 ESC -> MDL 设置中调节选项。",
             "Include": [
                 "Addon"
             ]
@@ -1691,6 +1691,13 @@ with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
     if (ROOT / 'convert_track.ps1').exists():
         zf.write(ROOT / 'convert_track.ps1', 'convert_track.ps1')
 print(f"Packaged distribution zip: {zip_path} ({zip_path.stat().st_size} bytes)")
+
+desktop_repo_dist = Path(r'C:\Users\kugua\Desktop\针剂音效\dist')
+if desktop_repo_dist.parent.exists():
+    desktop_repo_dist.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(zip_path, desktop_repo_dist / zip_path.name)
+    shutil.copy2(zip_path, Path(r'C:\Users\kugua\Desktop') / zip_path.name)
+    print(f"Copied release zip to Desktop and Desktop git repo dist: {zip_path.name}")
 
 # 8. Deploy directly to game directory if present
 game_data = Path(r'E:\SteamLibrary\steamapps\common\Helldivers 2\data')
