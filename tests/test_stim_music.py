@@ -565,9 +565,13 @@ class TestLuaRuntimeSimulation(unittest.TestCase):
         self.assertEqual(len(calls.audio_plays), prev_play_count)
 
     def test_ms_adpcm_and_rolling_prefetch_window(self):
+        # Alias for backward-compatible test runner: tests dynamic sample-accurate resume and stim_ms adjustment
+        self.test_dynamic_sample_accurate_resume_and_stim_ms_adjustment()
+
+    def test_dynamic_sample_accurate_resume_and_stim_ms_adjustment(self):
         import subprocess
-        # Generate 30s MS-ADPCM wav file (5 segments at 6.0s each)
-        test_wav = ROOT / 'test_adpcm_prefetch.wav'
+        # Generate 30s MS-ADPCM wav file
+        test_wav = ROOT / 'test_adpcm_resume.wav'
         ffmpeg_bin = r'D:\ffmpeg-7.1.1-essentials_build\bin\ffmpeg.exe'
         cmd = [
             ffmpeg_bin,
@@ -665,63 +669,77 @@ class TestLuaRuntimeSimulation(unittest.TestCase):
             calls = lua.globals().MOCK_CALLS
             player = lua.globals().MOCK_PLAYER
             step_fn = lua.globals().update
+            M = lua.globals()['__KUGUA_STIM_MUSIC']
 
-            # Step frame 0 to trigger mod options binding and initial default load
+            # Step frame 0: mod options binding
             step_fn(0.0)
-            initial_count = len(calls.audio_uploads)
 
-            # Point to test ADPCM track via menu choice
+            # Switch to test WAV track via menu choice
             track_opt = calls.options['kugua_stim_music.track']
             self.assertIsNotNone(track_opt.cb)
             track_opt.cb(str(test_wav).replace('\\', '/'))
-            switch_stops = len(calls.audio_stops)
 
-            # Step 1: Next frame triggers segment 1 upload asynchronously
+            # Idle step pre-buffers first slice (s2_1)
             step_fn(0.1)
-            self.assertEqual(len(calls.audio_uploads), initial_count + 1)
-            new_upload = calls.audio_uploads[len(calls.audio_uploads)]
-            self.assertEqual(new_upload.key, 's2_1')
-            # Each MS-ADPCM slice should be ~126KB base64, dramatically smaller than PCM (~1.3MB)
-            self.assertLess(new_upload.len, 200000)
+            self.assertEqual(len(calls.audio_uploads), 2)
+            self.assertEqual(calls.audio_uploads[2].key, 's2_1')
+            self.assertLess(calls.audio_uploads[2].len, 200000)
 
-            # Step 2: Advance time past 0.25s throttling interval to allow segment 2 upload
-            step_fn(0.3)
-            self.assertEqual(len(calls.audio_uploads), initial_count + 2)
-            self.assertEqual(calls.audio_uploads[len(calls.audio_uploads)].key, 's2_2')
-
-            # Step 3: Advance past next 0.25s interval to allow segment 3 upload
-            step_fn(0.3)
-            self.assertEqual(len(calls.audio_uploads), initial_count + 3)
-            self.assertEqual(calls.audio_uploads[len(calls.audio_uploads)].key, 's2_3')
-
-            # Step 4: ROLLING PREFETCH WINDOW TEST:
-            # Current segment is 1. Prefetch limit is min(total=5, 1 + 2) = 3.
-            # Even if 10 seconds pass with multiple ticks, segment 4 MUST NOT be uploaded yet!
-            for _ in range(10):
-                step_fn(0.5)
-            self.assertEqual(len(calls.audio_uploads), initial_count + 3,
-                             "Uploads must be strictly bounded by rolling prefetch window")
-
-            # Step 5: Player triggers stim 1 (segment 1 plays)
+            # 1. First stim: stims 4 -> 3
             player.stims = 3
             step_fn(0.1)
             self.assertEqual(len(calls.audio_plays), 1)
+            self.assertEqual(calls.audio_plays[1].key, 's2_1')
 
-            # Step 6: Advance until segment 1 completes (6.0s), advancing current_segment to 2
-            for _ in range(7):
-                step_fn(1.0)
-            self.assertEqual(len(calls.audio_stops), switch_stops + 1)
+            # Let stim play for 3.0 seconds (30 ticks of 0.1s)
+            for _ in range(30):
+                step_fn(0.1)
 
-            # Step 7: Now current_segment is 2 -> prefetch_limit is min(5, 2 + 2) = 4!
-            # Stepping should now lazily upload segment 4!
-            step_fn(0.3)
-            self.assertEqual(len(calls.audio_uploads), initial_count + 4)
-            self.assertEqual(calls.audio_uploads[len(calls.audio_uploads)].key, 's2_4')
+            # Player takes fatal damage: stops playback at ~3.0s
+            player.alive = False
+            step_fn(0.1)
+            self.assertGreaterEqual(len(calls.audio_stops), 1)
 
-            # Segment 5 must still NOT be uploaded yet (limit is 4):
-            for _ in range(5):
-                step_fn(0.5)
-            self.assertEqual(len(calls.audio_uploads), initial_count + 4)
+            # Verify M.track_pos is sample-accurate around 3.0s (NOT 0.0, NOT 6.0)!
+            self.assertAlmostEqual(M.track_pos, 3.0, delta=0.2)
+
+            # 2. Player respawns and dynamically adjusts stim_ms in menu (e.g. from 6000ms to 4500ms)
+            player.alive = True
+            player.stims = 4
+            step_fn(0.1)
+
+            stim_opt = calls.options['kugua_stim_music.stim_ms']
+            self.assertIsNotNone(stim_opt.cb)
+            stim_opt.cb(4500)
+
+            # Verify that adjusting stim_ms preserved track_pos EXACTLY!
+            self.assertAlmostEqual(M.track_pos, 3.0, delta=0.2)
+
+            # Player stims again: stims 4 -> 3
+            player.stims = 3
+            step_fn(0.1)
+            self.assertEqual(len(calls.audio_plays), 2)
+            self.assertTrue(calls.audio_plays[2].key.startswith('s2_'))
+            self.assertAlmostEqual(M.play_start_pos, 3.0, delta=0.2)
+
+            # Advance 4.5 seconds (the new stim_ms duration):
+            for _ in range(45):
+                step_fn(0.1)
+            # Advance past stim end window:
+            step_fn(0.1)
+
+            # Verify track_pos paused at 3.0 + 4.5 = 7.5s!
+            self.assertAlmostEqual(M.track_pos, 7.5, delta=0.25)
+
+            # 3. Player adjusts stim_ms again to 8000ms
+            stim_opt.cb(8000)
+            self.assertAlmostEqual(M.track_pos, 7.5, delta=0.25)
+
+            # Next stim resumes from 7.5s
+            player.stims = 2
+            step_fn(0.1)
+            self.assertEqual(len(calls.audio_plays), 3)
+            self.assertAlmostEqual(M.play_start_pos, 7.5, delta=0.25)
 
         finally:
             if test_wav.exists():

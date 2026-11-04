@@ -1,5 +1,5 @@
 -- HD2-Addon: mods/kugua/stim_music
--- StimMusic v2.0.0 for MDL3 (PUC Lua 5.1) + HD2 Data Hub >= 0.3.0 (HD2Data API 1).
+-- StimMusic v2.1.0 for MDL3 (PUC Lua 5.1) + HD2 Data Hub >= 0.3.0 (HD2Data API 1).
 -- Plays audio on stim / healing with segment resume and volume controls.
 -- Pure Lua 5.1, zero FFI, zero memory writes, 7-bit ASCII only.
 
@@ -9,7 +9,7 @@ if type(rawget(_G, KEY)) == 'table' and rawget(_G, KEY).active == true then
 end
 
 local ADDON_ID = 'mods/kugua/stim_music'
-local VERSION = '2.0.0'
+local VERSION = '2.1.0'
 
 local sr = rawget(_G, 'stingray')
 local App = sr and sr.Application
@@ -22,7 +22,7 @@ end
 -- String table: pure 7-bit ASCII using decimal escapes for Chinese UI labels
 local ZH = {
     mod_title = '\230\137\147\233\146\136\230\148\190\233\159\179\228\185\144 (Stim Music)',
-    mod_desc = '\233\156\128\232\166\129 MDL3 + HD2 Data Hub (0.3.0+) \229\137\141\231\189\174\227\128\130\230\137\147\233\146\136\239\188\136\229\155\158\232\161\128\239\188\137\232\167\166\229\143\145\233\159\179\228\185\144\230\146\173\230\148\190\239\188\140\230\148\175\230\140\129\228\184\139\230\172\161\231\187\167\231\187\173\230\146\173\230\148\190\228\184\142\233\159\179\233\135\143\232\176\131\232\138\130\227\128\130\229\143\175\229\156\168 ESC -> MDL \232\174\190\231\189\174\228\184\173\232\176\131\232\138\130\233\128\137\233\161\185\227\128\130',
+    mod_desc = '\233\156\128\232\166\129\32\77\68\76\51\32\43\32\72\68\50\32\68\97\116\97\32\72\117\98\32\40\48\46\51\46\48\43\41\32\229\137\141\231\189\174\227\128\130\230\137\147\233\146\136\239\188\136\229\155\158\232\161\128\239\188\137\232\167\166\229\143\145\233\159\179\228\185\144\230\146\173\230\148\190\239\188\140\230\148\175\230\140\129\230\175\171\231\167\146\231\186\167\229\138\168\230\128\129\230\150\173\231\130\185\230\142\165\231\187\173\228\184\142\233\159\179\233\135\143\232\176\131\232\138\130\227\128\130\229\143\175\229\156\168\32\69\83\67\32\45\62\32\77\68\76\32\232\174\190\231\189\174\228\184\173\232\176\131\232\138\130\233\128\137\233\161\185\227\128\130',
     opt_enabled = '\230\128\187\229\188\128\229\133\179 (Enabled)',
     opt_enabled_desc = '\230\137\147\233\146\136\230\148\190\233\159\179\228\185\144\230\168\161\231\187\132\230\128\187\229\188\128\229\133\179',
     opt_track = '\233\159\179\228\185\144\230\150\135\228\187\182 (Music Track)',
@@ -30,7 +30,7 @@ local ZH = {
     opt_volume = '\233\159\179\228\185\144\233\159\179\233\135\143 (Volume %)',
     opt_volume_desc = '\233\146\136\229\137\130\233\159\179\228\185\144\230\146\173\230\148\190\233\159\179\233\135\143 (0-100)',
     opt_stim_ms = '\233\146\136\229\137\130\230\151\182\233\149\191 (Stim Length ms)',
-    opt_stim_ms_desc = '\228\184\128\230\172\161\233\146\136\229\137\130\231\148\159\230\149\136\230\140\129\231\187\173\230\151\182\233\149\191\228\184\142\233\159\179\228\185\144\230\146\173\230\148\190\231\170\151\229\143\163 (\230\175\171\231\167\146)',
+    opt_stim_ms_desc = '\229\141\149\230\172\161\230\137\147\233\146\136\231\148\159\230\149\136\230\140\129\231\187\173\230\151\182\233\151\180\228\184\142\233\159\179\228\185\144\230\146\173\230\148\190\231\170\151\229\143\163\239\188\136\230\175\171\231\167\146\239\188\137\227\128\130\232\176\131\230\149\180\229\144\142\228\187\141\228\188\154\230\151\160\231\188\157\230\142\165\231\187\173\228\184\138\230\172\161\230\150\173\231\130\185\227\128\130',
     opt_min_heal = '\230\156\128\229\176\143\229\155\158\232\161\128\233\135\143\229\136\164\229\174\154',
     opt_min_heal_desc = '\229\141\149\230\172\161\229\136\164\229\174\154\233\146\136\229\137\130\231\148\159\230\149\136\231\154\132\230\156\128\229\176\143\229\155\158\232\161\128\230\149\176\229\128\188 (1-50)',
     opt_hot_reload = '\232\135\170\229\138\168\230\163\128\230\181\139\230\155\180\230\150\176 (Hot Reload)',
@@ -38,7 +38,7 @@ local ZH = {
 }
 local EN = {
     mod_title = 'Stim Music',
-    mod_desc = 'Plays audio on stim/healing with segment resume. Requires MDL3 + HD2 Data Hub (0.3.0+).',
+    mod_desc = 'Plays audio on stim/healing with dynamic sample-accurate resume. Requires MDL3 + HD2 Data Hub (0.3.0+).',
     opt_enabled = 'Enabled',
     opt_enabled_desc = 'Master toggle for Stim Music mod.',
     opt_track = 'Music Track',
@@ -46,7 +46,7 @@ local EN = {
     opt_volume = 'Music Volume (%)',
     opt_volume_desc = 'Playback volume for stim music (0-100).',
     opt_stim_ms = 'Stim Length (ms)',
-    opt_stim_ms_desc = 'Stim duration window and playback time per heal (ms).',
+    opt_stim_ms_desc = 'Stim duration window and playback time per heal (ms). Resumes smoothly from breakpoint even when adjusted.',
     opt_min_heal = 'Minimum Heal Threshold',
     opt_min_heal_desc = 'Minimum health increase to count as stim effect (1-50).',
     opt_hot_reload = 'Hot Reload',
@@ -159,28 +159,36 @@ local M = {
     stim_active = false,
     is_playing = false,
     stim_end_clock = 0,
-    seg_start_clock = 0,
-    seg_end_clock = 0,
-    seg_duration = 6.0,
-    play_retry_idx = nil,
+    play_start_clock = 0,
+    play_start_pos = 0.0,
+    cue_duration = 0.0,
+    track_pos = 0.0,
+    cue_idx = 0,
+    current_key = nil,
+    playing_ns = nil,
+    play_retry_key = nil,
+    play_retry_ns = nil,
+    play_retry_dur = nil,
+    play_retry_pos = nil,
     play_retry_clock = 0,
     play_retries = 0,
+    
+    -- Pre-uploaded idle cue:
+    prepared_key = nil,
+    prepared_dur = nil,
+    prepared_ns = nil,
+    prepared_pos = nil,
+    next_prepare_clock = 0,
     
     -- Audio system:
     audio_format_defined = false,
     audio_api_probed = false,
-    next_upload_clock = 0,
     ns_slot = 0,
     current_ns = nil,
     audio_track_path = nil,
     audio_track_fp = nil,
     audio_track_filename = nil,
     audio_info = nil,
-    current_segment = 1,
-    total_segments = 1,
-    segment_durations = {},
-    uploaded_segments = {},
-    next_upload_idx = 1,
     using_default = false,
     track_gen = 0,
     
@@ -814,32 +822,6 @@ local function locate_music_file()
     return nil
 end
 
-local function upload_single_segment(idx)
-    local A = get_audio_service()
-    local ns = M.current_ns
-    if not A or not ns or M.using_default or not M.audio_info then return false end
-    if idx < 1 or idx > M.total_segments then return false end
-    if M.uploaded_segments[idx] then return true end
-    
-    local stim_sec = math.max(2.0, (CONFIG.stim_ms or 6000) / 1000)
-    local start_sec = (idx - 1) * stim_sec
-    local b64_data, actual_duration = read_wav_slice(M.audio_info, start_sec, stim_sec)
-    if b64_data then
-        local key = 's' .. M.track_gen .. '_' .. idx
-        local ok, why = A.upload(ns, key, b64_data)
-        if ok then
-            M.uploaded_segments[idx] = true
-            M.segment_durations[idx] = actual_duration or stim_sec
-            log_fmt('Segment %d queued for upload on %s (key=%s, dur=%.1fs)', idx, ns, key, actual_duration or stim_sec)
-            return true
-        else
-            log_fmt('Upload %s refused for ns=%s: %s', key, ns, tostring(why))
-            return false
-        end
-    end
-    return false
-end
-
 local function probe_audio_api(A, ns)
     if M.audio_api_probed or not A then return end
     M.audio_api_probed = true
@@ -858,6 +840,61 @@ local function probe_audio_api(A, ns)
         end
     end
     log_fmt('==================================')
+end
+
+local function prepare_cue_for_pos(target_pos, req_duration)
+    local A = get_audio_service()
+    if not A then return nil, 0 end
+
+    local stim_sec = req_duration or math.max(1.0, (CONFIG.stim_ms or 6000) / 1000)
+    
+    if M.using_default or not M.audio_info then
+        M.cue_idx = (M.cue_idx or 0) + 1
+        local key = 's' .. M.track_gen .. '_' .. M.cue_idx
+        local ns = M.current_ns or NS_RING[1]
+        A.upload(ns, key, DEFAULT_AUDIO_B64)
+        return key, 4.0, ns, 0.0
+    end
+
+    local total_dur = M.audio_info.duration
+    if total_dur <= 0 then return nil, 0 end
+
+    target_pos = target_pos % total_dur
+    if (total_dur - target_pos) < 0.1 then
+        target_pos = 0.0
+    end
+
+    local slice_dur = math.min(stim_sec, total_dur - target_pos)
+    local b64_data, actual_dur = read_wav_slice(M.audio_info, target_pos, slice_dur)
+    if not b64_data or actual_dur <= 0 then
+        target_pos = 0.0
+        slice_dur = math.min(stim_sec, total_dur)
+        b64_data, actual_dur = read_wav_slice(M.audio_info, 0.0, slice_dur)
+    end
+    if not b64_data then return nil, 0 end
+
+    M.cue_idx = (M.cue_idx or 0) + 1
+    local ring_idx = math.floor((M.cue_idx - 1) / 12) % #NS_RING + 1
+    local ns = NS_RING[ring_idx]
+    if ns ~= M.current_ns then
+        pcall(A.stop, ns, ROLE)
+        if type(A.release) == 'function' then
+            pcall(A.release, ns)
+        end
+        A.define_format(ns, M.audio_info.wfx_b64)
+        A.pool(ns, { [ROLE] = 2 })
+        M.current_ns = ns
+        log_fmt('Rotated audio namespace to %s (cue #%d)', ns, M.cue_idx)
+    end
+
+    local key = 's' .. M.track_gen .. '_' .. M.cue_idx
+    local ok, why = A.upload(ns, key, b64_data)
+    if not ok then
+        log_fmt('Upload failed for %s on %s: %s', key, ns, tostring(why))
+        return nil, 0
+    end
+
+    return key, actual_dur, ns, target_pos
 end
 
 local function init_audio_track()
@@ -881,14 +918,20 @@ local function init_audio_track()
     M.track_gen = (M.track_gen or 0) + 1
     M.stim_active = false
     M.is_playing = false
-    M.play_retry_idx = nil
+    M.track_pos = 0.0
+    M.play_start_clock = 0.0
+    M.play_start_pos = 0.0
+    M.cue_duration = 0.0
+    M.cue_idx = 0
+    M.current_key = nil
+    M.playing_ns = nil
+    M.play_retry_key = nil
     M.play_retries = 0
-    M.segment_durations = {}
-    M.uploaded_segments = {}
-    M.seg_duration = nil
-    M.seg_start_clock = nil
-    M.seg_end_clock = nil
-    M.next_upload_clock = 0
+    M.prepared_key = nil
+    M.prepared_dur = nil
+    M.prepared_ns = nil
+    M.prepared_pos = nil
+    M.next_prepare_clock = 0
     
     local path = locate_music_file()
     if path then
@@ -899,10 +942,6 @@ local function init_audio_track()
             M.audio_track_filename = path:match('([^/\\]+%.wav)$') or path
             M.audio_info = info
             M.using_default = false
-            local stim_sec = math.max(2.0, (CONFIG.stim_ms or 6000) / 1000)
-            local total_segs = math.ceil(info.duration / stim_sec)
-            M.total_segments = math.min(100, math.max(1, total_segs))
-            M.current_segment = 1
             
             local ok_f, why_f = A.define_format(current_ns, info.wfx_b64)
             if not ok_f then log_fmt('define_format failed for %s: %s', current_ns, tostring(why_f)) end
@@ -911,12 +950,9 @@ local function init_audio_track()
             
             probe_audio_api(A, current_ns)
             
-            -- UI thread: queue segment 1 asynchronously to eliminate menu stutter
-            M.next_upload_idx = 1
-            
             local fmt_name = (info.tag == 2) and 'MS-ADPCM' or 'PCM-16'
-            log_fmt('Audio track loaded: %s on ns=%s (fmt=%s, gen=%d, %.1fs, %d channels, %d Hz, %d segments)',
-                path, current_ns, fmt_name, M.track_gen, info.duration, info.channels, info.rate, M.total_segments)
+            log_fmt('Audio track loaded: %s on ns=%s (fmt=%s, gen=%d, %.1fs, %d channels, %d Hz)',
+                path, current_ns, fmt_name, M.track_gen, info.duration, info.channels, info.rate)
             return true
         else
             log_fmt('WAV parse error (%s): %s', tostring(path), tostring(err))
@@ -929,130 +965,121 @@ local function init_audio_track()
     M.audio_track_filename = '[embedded default]'
     M.audio_info = nil
     M.using_default = true
-    M.total_segments = 1
-    M.current_segment = 1
-    M.segment_durations[1] = 4.0
     
     A.define_format(current_ns, DEFAULT_WFX_B64)
     A.pool(current_ns, { [ROLE] = 2 })
     probe_audio_api(A, current_ns)
+    
+    M.cue_idx = 1
     local def_key = 's' .. M.track_gen .. '_1'
     A.upload(current_ns, def_key, DEFAULT_AUDIO_B64)
-    M.uploaded_segments[1] = true
-    M.next_upload_idx = 2
+    M.prepared_key = def_key
+    M.prepared_dur = 4.0
+    M.prepared_ns = current_ns
+    M.prepared_pos = 0.0
     log_fmt('Using embedded default stim audio on ns=%s (key=%s)', current_ns, def_key)
     return true
 end
 
-local function step_audio_uploads()
-    local A = get_audio_service()
-    local ns = M.current_ns
-    if not A or not ns or M.using_default or not M.audio_info then return end
-    if M.next_upload_idx > M.total_segments then return end
-    
-    -- Rolling prefetch window: only upload up to (current_segment + 2) segments
-    -- Completely prevents consecutive frame freezes and excessive memory consumption
-    local prefetch_limit = math.min(M.total_segments, (M.current_segment or 1) + 2)
-    if M.next_upload_idx > prefetch_limit then return end
-    
-    -- Fast forward if segment already uploaded
-    if M.uploaded_segments[M.next_upload_idx] then
-        M.next_upload_idx = M.next_upload_idx + 1
-        return
-    end
-    
-    -- Throttling: minimum 250ms between uploads to spread base64 encoding cost across frames
-    if M.clock < (M.next_upload_clock or 0) then return end
-    
-    local idx = M.next_upload_idx
-    if upload_single_segment(idx) then
-        M.next_upload_idx = idx + 1
-        M.next_upload_clock = M.clock + 0.25
-    else
-        M.next_upload_clock = M.clock + 0.5
-    end
-end
-
 -- ---------------------------------------------------------------- Stim Music Actions
-local function start_stim_segment(seg_idx)
+local function start_stim_playback()
     if not CONFIG.enabled then return false end
     local A = get_audio_service()
-    local ns = M.current_ns
-    if not A or not ns then return false end
+    if not A then return false end
     
-    if not M.using_default then
-        if not M.uploaded_segments[seg_idx] then
-            upload_single_segment(seg_idx)
-        end
-    end
-    
-    local key = M.using_default and ('s' .. M.track_gen .. '_1') or ('s' .. M.track_gen .. '_' .. seg_idx)
     local vol = math.max(0, math.min(100, math.floor((CONFIG.volume or 100) + 0.5)))
     if vol <= 0 then return false end
     
-    -- In MDL3 API 1 (XAudio2), A.play accepts the cue if buffer is ready and a voice is free.
-    -- Directly calling A.play matches BFV and MeleeSFX implementations.
+    local key, dur, ns, actual_pos
+    if M.prepared_key and M.prepared_ns and math.abs((M.prepared_pos or 0) - (M.track_pos or 0)) < 0.05 then
+        key = M.prepared_key
+        dur = M.prepared_dur
+        ns = M.prepared_ns
+        actual_pos = M.prepared_pos
+        M.prepared_key = nil
+        M.prepared_dur = nil
+        M.prepared_ns = nil
+        M.prepared_pos = nil
+    else
+        key, dur, ns, actual_pos = prepare_cue_for_pos(M.track_pos or 0.0)
+    end
+    
+    if not key or not ns then
+        log_fmt('Cannot start stim music: cue preparation failed for pos=%.2f', M.track_pos or 0.0)
+        return false
+    end
+    
     local ok, played = pcall(A.play, ns, key, { role = ROLE, volume = vol })
     if ok and played == true then
-        local stim_sec = math.max(2.0, (CONFIG.stim_ms or 6000) / 1000)
-        local dur = (M.segment_durations and M.segment_durations[seg_idx]) or (M.using_default and 4.0) or stim_sec
-        M.seg_duration = dur
-        M.seg_start_clock = M.clock
-        M.seg_end_clock = M.clock + dur
         M.is_playing = true
-        M.play_retry_idx = nil
+        M.play_start_clock = M.clock
+        M.play_start_pos = actual_pos or (M.track_pos or 0.0)
+        M.cue_duration = dur or 6.0
+        M.current_key = key
+        M.playing_ns = ns
+        M.play_retry_key = nil
         M.play_retries = 0
         M.stims_count = M.stims_count + 1
-        M.last_status_verdict = string.format('PLAYING - segment %d / %d (%.1fs)', seg_idx, M.total_segments, dur)
-        log_fmt('Stim music started: %s on %s (vol=%d, dur=%.1fs, stim#=%d)', key, ns, vol, dur, M.stims_count)
+        local total_dur = M.audio_info and M.audio_info.duration or (M.using_default and 4.0 or 0.0)
+        M.last_status_verdict = string.format('PLAYING - at %.1fs / %.1fs (vol=%d%%)', M.play_start_pos, total_dur, vol)
+        log_fmt('Stim music started: %s on %s from pos=%.2fs (vol=%d, dur=%.1fs, stim#=%d)',
+            key, ns, M.play_start_pos, vol, dur, M.stims_count)
         return true
     else
         local retries = (M.play_retries or 0) + 1
         M.play_retries = retries
         if retries == 1 or retries % 10 == 0 then
-            local r_ok, r_err = nil, nil
-            if type(A.ready) == 'function' then
-                local ok_call_r, is_r, why_not = pcall(A.ready, ns, key)
-                r_ok = ok_call_r and is_r
-                r_err = why_not
-            end
-            local st_ready = nil
-            if type(A.status) == 'function' then
-                local ok_s, st = pcall(A.status, ns)
-                if ok_s and type(st) == 'table' then st_ready = st.ready end
-            end
-            log_fmt('Stim play retry for %s on %s (vol=%d, ok=%s, played=%s, ready=%s, r_err=%s, st_ready=%s, retry #%d)',
-                key, ns, vol, tostring(ok), tostring(played), tostring(r_ok), tostring(r_err), tostring(st_ready), retries)
+            log_fmt('Stim play retry for %s on %s (vol=%d, ok=%s, played=%s, retry #%d)',
+                key, ns, vol, tostring(ok), tostring(played), retries)
         end
-        M.play_retry_idx = seg_idx
+        M.play_retry_key = key
+        M.play_retry_ns = ns
+        M.play_retry_dur = dur
+        M.play_retry_pos = actual_pos
         M.play_retry_clock = M.clock + 0.05
         return false
     end
 end
 
-local function advance_to_next_segment()
-    local prev = M.current_segment
-    M.current_segment = M.current_segment + 1
-    if M.current_segment > M.total_segments then
-        M.current_segment = 1
-    end
-    return prev, M.current_segment
-end
-
-local function stop_stim_playback()
+local function stop_stim_playback(reason)
     if not M.stim_active and not M.is_playing then return end
+    
+    local elapsed = 0.0
+    if M.is_playing and M.play_start_clock and M.play_start_clock > 0 then
+        elapsed = math.max(0.0, M.clock - M.play_start_clock)
+        if M.cue_duration and elapsed > M.cue_duration then
+            elapsed = M.cue_duration
+        end
+    end
+    
+    local total_dur = M.audio_info and M.audio_info.duration or (M.using_default and 4.0 or 0.0)
+    if total_dur > 0 then
+        M.track_pos = ((M.play_start_pos or 0.0) + elapsed) % total_dur
+    else
+        M.track_pos = 0.0
+    end
+    
     M.stim_active = false
     M.is_playing = false
-    M.play_retry_idx = nil
+    M.play_retry_key = nil
     M.play_retries = 0
+    
     local A = get_audio_service()
-    local ns = M.current_ns
+    local ns = M.playing_ns or M.current_ns
     if A and ns then
         pcall(A.stop, ns, ROLE)
     end
-    local prev, nxt = advance_to_next_segment()
-    M.last_status_verdict = string.format('PAUSED - played seg %d, next will be %d', prev, nxt)
-    log_fmt('Stim music stopped: segment %d finished, next will be %d', prev, nxt)
+    
+    if M.prepared_pos and math.abs(M.prepared_pos - M.track_pos) >= 0.05 then
+        M.prepared_key = nil
+        M.prepared_dur = nil
+        M.prepared_ns = nil
+        M.prepared_pos = nil
+    end
+    
+    M.last_status_verdict = string.format('PAUSED - at %.2fs / %.1fs', M.track_pos, total_dur)
+    log_fmt('Stim music stopped (%s): paused at %.2fs / %.1fs (played %.2fs)',
+        tostring(reason or 'stim_end'), M.track_pos, total_dur, elapsed)
 end
 
 -- ---------------------------------------------------------------- Status Snapshot
@@ -1062,8 +1089,8 @@ local function write_status_snapshot()
     local f = io.open(p, 'w')
     if not f then return end
     
-    local stim_dur = math.max(2.0, (CONFIG.stim_ms or 6000) / 1000)
     local remaining_ms = M.stim_active and math.floor(math.max(0, M.stim_end_clock - M.clock) * 1000) or -1
+    local total_dur = M.audio_info and M.audio_info.duration or (M.using_default and 4.0 or 0.0)
     
     f:write('verdict=', M.last_status_verdict, '\n')
     f:write('revision=', VERSION, '\n')
@@ -1077,8 +1104,8 @@ local function write_status_snapshot()
     f:write('track=', tostring(M.audio_track_path or '[embedded default]'), '\n')
     f:write('filename=', tostring(M.audio_track_filename or 'none'), '\n')
     f:write('using_default=', tostring(M.using_default), '\n')
-    f:write('total_segments=', tostring(M.total_segments), '\n')
-    f:write('current_segment=', tostring(M.current_segment), '\n')
+    f:write('track_pos_sec=', string.format('%.2f', M.track_pos or 0.0), '\n')
+    f:write('track_duration_sec=', string.format('%.2f', total_dur), '\n')
     f:write('stim_active=', tostring(M.stim_active), '\n')
     f:write('is_playing=', tostring(M.is_playing), '\n')
     f:write('stim_remaining_ms=', tostring(remaining_ms), '\n')
@@ -1134,8 +1161,8 @@ local function bind_mod_options()
         if val ~= nil and val ~= CONFIG.enabled then
             CONFIG.enabled = val
             log_fmt('Enabled set to %s', tostring(val))
-            if not val and M.stim_active then
-                stop_stim_playback()
+            if not val and (M.stim_active or M.is_playing) then
+                stop_stim_playback('disabled')
             end
             write_status_snapshot()
             persist_ini_config()
@@ -1188,8 +1215,8 @@ local function bind_mod_options()
             if num ~= CONFIG.volume then
                 CONFIG.volume = num
                 log_fmt('Volume set to %d%%', CONFIG.volume)
-                if num == 0 and M.stim_active then
-                    stop_stim_playback()
+                if num == 0 and (M.stim_active or M.is_playing) then
+                    stop_stim_playback('mute')
                 end
                 write_status_snapshot()
                 persist_ini_config()
@@ -1207,6 +1234,13 @@ local function bind_mod_options()
             if num ~= CONFIG.stim_ms then
                 CONFIG.stim_ms = num
                 log_fmt('Stim duration set to %dms', CONFIG.stim_ms)
+                if M.stim_active and M.is_playing then
+                    local new_dur = num / 1000
+                    M.stim_end_clock = (M.play_start_clock or M.clock) + new_dur
+                    log_fmt('Live stim end adjusted to clock=%.2f (%.2fs left)',
+                        M.stim_end_clock, math.max(0, M.stim_end_clock - M.clock))
+                end
+                M.prepared_key = nil
                 write_status_snapshot()
                 persist_ini_config()
             end
@@ -1263,12 +1297,13 @@ local function on_mission_started(ev)
     M.last_health = nil
     M.last_stims = nil
     M.stim_active = false
-    M.current_segment = 1
-    log_msg('Mission started: stim music position reset to segment 1.')
+    M.track_pos = 0.0
+    M.prepared_key = nil
+    log_msg('Mission started: stim music position reset to 0.0s.')
 end
 
 local function on_mission_ended(ev)
-    stop_stim_playback()
+    stop_stim_playback('mission_ended')
     M.last_health = nil
     M.last_stims = nil
     log_msg('Mission ended: stim playback stopped.')
@@ -1276,7 +1311,7 @@ end
 
 local function on_entity_died(ev)
     if ev and ev.avatar and ev.local_killer then
-        stop_stim_playback()
+        stop_stim_playback('entity_died')
     end
 end
 
@@ -1356,18 +1391,49 @@ local function step(dt)
         end
     end
 
-    -- Process progressive audio uploads
-    step_audio_uploads()
-
-    -- Retry pending play if previous attempt was waiting for decoder / upload
-    if M.play_retry_idx and M.clock >= M.play_retry_clock and M.stim_active then
+    -- Step 1: Retry pending play if previous attempt was waiting for voice / buffer
+    if M.play_retry_key and M.clock >= (M.play_retry_clock or 0) and M.stim_active then
         if M.clock <= M.stim_end_clock then
-            start_stim_segment(M.play_retry_idx)
+            local A = get_audio_service()
+            if A then
+                local vol = math.max(0, math.min(100, math.floor((CONFIG.volume or 100) + 0.5)))
+                local ok, played = pcall(A.play, M.play_retry_ns, M.play_retry_key, { role = ROLE, volume = vol })
+                if ok and played == true then
+                    M.is_playing = true
+                    M.play_start_clock = M.clock
+                    M.play_start_pos = M.play_retry_pos or (M.track_pos or 0.0)
+                    M.cue_duration = M.play_retry_dur or 6.0
+                    M.current_key = M.play_retry_key
+                    M.playing_ns = M.play_retry_ns
+                    M.play_retry_key = nil
+                    M.play_retries = 0
+                    M.stims_count = M.stims_count + 1
+                    local total_dur = M.audio_info and M.audio_info.duration or (M.using_default and 4.0 or 0.0)
+                    M.last_status_verdict = string.format('PLAYING - at %.1fs / %.1fs (vol=%d%%)', M.play_start_pos, total_dur, vol)
+                    log_fmt('Stim play retry succeeded for %s on %s', M.current_key, M.playing_ns)
+                else
+                    M.play_retries = (M.play_retries or 0) + 1
+                    M.play_retry_clock = M.clock + 0.05
+                end
+            end
         else
-            log_fmt('Stim window ended before segment %d could play (retried %d times)',
-                M.play_retry_idx, M.play_retries or 0)
-            M.play_retry_idx = nil
+            log_fmt('Stim window ended before retry succeeded for %s', tostring(M.play_retry_key))
+            M.play_retry_key = nil
             M.play_retries = 0
+        end
+    end
+
+    -- Step 2: Idle pre-upload: prepare next slice buffer while player is running around
+    if not M.stim_active and not M.is_playing and M.audio_info and not M.using_default then
+        if not M.prepared_key and M.clock >= (M.next_prepare_clock or 0) then
+            local key, dur, ns, pos = prepare_cue_for_pos(M.track_pos or 0.0)
+            if key then
+                M.prepared_key = key
+                M.prepared_dur = dur
+                M.prepared_ns = ns
+                M.prepared_pos = pos
+            end
+            M.next_prepare_clock = M.clock + 0.5
         end
     end
 
@@ -1398,12 +1464,12 @@ local function step(dt)
             M.last_alive = true
 
             if stim_triggered and CONFIG.enabled then
-                local stim_duration = math.max(2.0, (CONFIG.stim_ms or 6000) / 1000)
+                local stim_duration = math.max(1.0, (CONFIG.stim_ms or 6000) / 1000)
                 if not M.stim_active then
-                    -- Fresh stim trigger: start playing current segment
+                    -- Fresh stim trigger: start playing from current track_pos
                     M.stim_active = true
                     M.stim_end_clock = M.clock + stim_duration
-                    start_stim_segment(M.current_segment)
+                    start_stim_playback()
                 else
                     -- Consecutive stim: extend overall stim duration without restarting/interrupting audio!
                     local new_end = math.min(M.clock + 30.0, math.max(M.stim_end_clock, M.clock) + stim_duration)
@@ -1412,15 +1478,15 @@ local function step(dt)
                         stim_duration, M.stim_end_clock, M.stim_end_clock - M.clock)
                     
                     -- If audio was stopped or not currently playing, kickstart it:
-                    if not M.is_playing and not M.play_retry_idx then
-                        start_stim_segment(M.current_segment)
+                    if not M.is_playing and not M.play_retry_key then
+                        start_stim_playback()
                     end
                 end
             end
         elseif type(p) == 'table' and p.alive == false then
             if M.last_alive then
                 M.last_alive = false
-                stop_stim_playback()
+                stop_stim_playback('player_dead')
             end
         else
             M.last_stims = nil
@@ -1428,21 +1494,23 @@ local function step(dt)
         end
     end
 
-    -- Monitor active stim playback & continuous segment chaining
+    -- Monitor active stim playback & continuous chaining
     if M.stim_active and M.is_playing then
         if M.clock >= M.stim_end_clock then
             -- Entire stim effect ended
-            stop_stim_playback()
-        elseif M.clock >= (M.seg_end_clock - 0.02) then
+            stop_stim_playback('stim_window_end')
+        elseif (M.stim_end_clock - M.clock) > 0.1 and M.clock >= (M.play_start_clock + M.cue_duration - 0.05) then
             -- Audio slice finished, but stim effect is still active! Chain into next slice seamlessly!
-            local prev, nxt = advance_to_next_segment()
-            log_fmt('Segment %d audio finished, stim active (%.1fs left) -> chaining segment %d',
-                prev, M.stim_end_clock - M.clock, nxt)
-            local expected_start = M.seg_end_clock
-            if start_stim_segment(nxt) then
-                M.seg_start_clock = expected_start
-                M.seg_end_clock = expected_start + M.seg_duration
+            local elapsed = M.cue_duration
+            local total_dur = M.audio_info and M.audio_info.duration or (M.using_default and 4.0 or 0.0)
+            if total_dur > 0 then
+                M.track_pos = ((M.play_start_pos or 0.0) + elapsed) % total_dur
+            else
+                M.track_pos = 0.0
             end
+            log_fmt('Audio cue finished, stim active (%.1fs left) -> chaining next slice at %.2fs',
+                M.stim_end_clock - M.clock, M.track_pos)
+            start_stim_playback()
         end
     end
 
@@ -1466,7 +1534,7 @@ end)
 rawset(_G, 'shutdown', function(...)
     pcall(function()
         M.active = false
-        stop_stim_playback()
+        stop_stim_playback('shutdown')
         local A = get_audio_service()
         if A and type(A.release) == 'function' then
             for _, ns in ipairs(NS_RING) do
