@@ -1,5 +1,5 @@
 -- HD2-Addon: mods/kugua/stim_music
--- StimMusic v2.1.0 for MDL3 (PUC Lua 5.1) + HD2 Data Hub >= 0.3.0 (HD2Data API 1).
+-- StimMusic v2.1.1 for MDL3 (PUC Lua 5.1) + HD2 Data Hub >= 0.3.0 (HD2Data API 1).
 -- Plays audio on stim / healing with segment resume and volume controls.
 -- Pure Lua 5.1, zero FFI, zero memory writes, 7-bit ASCII only.
 
@@ -9,7 +9,7 @@ if type(rawget(_G, KEY)) == 'table' and rawget(_G, KEY).active == true then
 end
 
 local ADDON_ID = 'mods/kugua/stim_music'
-local VERSION = '2.1.0'
+local VERSION = '2.1.1'
 
 local sr = rawget(_G, 'stingray')
 local App = sr and sr.Application
@@ -844,14 +844,14 @@ end
 
 local function prepare_cue_for_pos(target_pos, req_duration)
     local A = get_audio_service()
-    if not A then return nil, 0 end
+    local ns = M.current_ns
+    if not A or not ns then return nil, 0 end
 
     local stim_sec = req_duration or math.max(1.0, (CONFIG.stim_ms or 6000) / 1000)
     
     if M.using_default or not M.audio_info then
         M.cue_idx = (M.cue_idx or 0) + 1
         local key = 's' .. M.track_gen .. '_' .. M.cue_idx
-        local ns = M.current_ns or NS_RING[1]
         A.upload(ns, key, DEFAULT_AUDIO_B64)
         return key, 4.0, ns, 0.0
     end
@@ -874,19 +874,6 @@ local function prepare_cue_for_pos(target_pos, req_duration)
     if not b64_data then return nil, 0 end
 
     M.cue_idx = (M.cue_idx or 0) + 1
-    local ring_idx = math.floor((M.cue_idx - 1) / 12) % #NS_RING + 1
-    local ns = NS_RING[ring_idx]
-    if ns ~= M.current_ns then
-        pcall(A.stop, ns, ROLE)
-        if type(A.release) == 'function' then
-            pcall(A.release, ns)
-        end
-        A.define_format(ns, M.audio_info.wfx_b64)
-        A.pool(ns, { [ROLE] = 2 })
-        M.current_ns = ns
-        log_fmt('Rotated audio namespace to %s (cue #%d)', ns, M.cue_idx)
-    end
-
     local key = 's' .. M.track_gen .. '_' .. M.cue_idx
     local ok, why = A.upload(ns, key, b64_data)
     if not ok then
@@ -953,6 +940,15 @@ local function init_audio_track()
             local fmt_name = (info.tag == 2) and 'MS-ADPCM' or 'PCM-16'
             log_fmt('Audio track loaded: %s on ns=%s (fmt=%s, gen=%d, %.1fs, %d channels, %d Hz)',
                 path, current_ns, fmt_name, M.track_gen, info.duration, info.channels, info.rate)
+            
+            local key, dur, ns, pos = prepare_cue_for_pos(0.0)
+            if key then
+                M.prepared_key = key
+                M.prepared_dur = dur
+                M.prepared_ns = ns
+                M.prepared_pos = pos
+                log_fmt('Pre-buffered initial cue for %s: %s on %s', M.audio_track_filename, key, ns)
+            end
             return true
         else
             log_fmt('WAV parse error (%s): %s', tostring(path), tostring(err))
@@ -991,7 +987,7 @@ local function start_stim_playback()
     if vol <= 0 then return false end
     
     local key, dur, ns, actual_pos
-    if M.prepared_key and M.prepared_ns and math.abs((M.prepared_pos or 0) - (M.track_pos or 0)) < 0.05 then
+    if M.prepared_key and M.prepared_ns == M.current_ns and math.abs((M.prepared_pos or 0) - (M.track_pos or 0)) < 0.05 then
         key = M.prepared_key
         dur = M.prepared_dur
         ns = M.prepared_ns
@@ -1026,6 +1022,7 @@ local function start_stim_playback()
             key, ns, M.play_start_pos, vol, dur, M.stims_count)
         return true
     else
+        M.is_playing = false
         local retries = (M.play_retries or 0) + 1
         M.play_retries = retries
         if retries == 1 or retries % 10 == 0 then
@@ -1036,13 +1033,13 @@ local function start_stim_playback()
         M.play_retry_ns = ns
         M.play_retry_dur = dur
         M.play_retry_pos = actual_pos
-        M.play_retry_clock = M.clock + 0.05
+        M.play_retry_clock = M.clock + 0.1
         return false
     end
 end
 
 local function stop_stim_playback(reason)
-    if not M.stim_active and not M.is_playing then return end
+    if not M.stim_active and not M.is_playing and not M.play_retry_key then return end
     
     local elapsed = 0.0
     if M.is_playing and M.play_start_clock and M.play_start_clock > 0 then
@@ -1508,6 +1505,8 @@ local function step(dt)
             else
                 M.track_pos = 0.0
             end
+            M.is_playing = false
+            
             log_fmt('Audio cue finished, stim active (%.1fs left) -> chaining next slice at %.2fs',
                 M.stim_end_clock - M.clock, M.track_pos)
             start_stim_playback()
