@@ -1,4 +1,4 @@
-# StimMusic Audio Optimizer (16-bit PCM for MDL3 XAudio2)
+﻿# StimMusic Audio Optimizer (16-bit PCM for MDL3 XAudio2)
 param(
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$Files
@@ -52,7 +52,7 @@ if (-not $Files -or $Files.Count -eq 0) {
     }
 
     # Step 1: scan compressed files (.m4s, .mp3, .mp4, .flac, .ogg)
-    $sourceFiles = Get-ChildItem -File | Where-Object { $_.Extension -match '^\.(mp3|m4s|mp4|flac|ogg)$' }
+    $sourceFiles = Get-ChildItem -File | Where-Object { $_.Extension -eq ".mp3" -or $_.Extension -eq ".m4s" -or $_.Extension -eq ".mp4" -or $_.Extension -eq ".flac" -or $_.Extension -eq ".ogg" }
     foreach ($f in $sourceFiles) {
         $outName = "$($f.BaseName).wav"
         Write-Host "正在转码转换: $($f.Name) -> $outName" -ForegroundColor Yellow
@@ -66,7 +66,7 @@ if (-not $Files -or $Files.Count -eq 0) {
     }
 
     # Step 2: scan existing WAV files and optimize
-    $wavFiles = Get-ChildItem -File -Filter "*.wav" | Where-Object { $_.Name -notmatch '_pcm_tmp\.wav$' }
+    $wavFiles = Get-ChildItem -File -Filter "*.wav" | Where-Object { -not $_.Name.EndsWith("_pcm_tmp.wav") }
     foreach ($w in $wavFiles) {
         $oldSizeMB = [math]::Round($w.Length / 1MB, 2)
         $tmpName = "$($w.BaseName)_pcm_tmp.wav"
