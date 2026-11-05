@@ -1,5 +1,5 @@
 -- HD2-Addon: mods/kugua/stim_music
--- StimMusic v2.2.0 for MDL3 (PUC Lua 5.1) + HD2 Data Hub >= 0.3.0 (HD2Data API 1).
+-- StimMusic v2.2.1 for MDL3 (PUC Lua 5.1) + HD2 Data Hub >= 0.3.0 (HD2Data API 1).
 -- Plays audio on stim / healing with segment resume and volume controls.
 -- Pure Lua 5.1, zero FFI, zero memory writes, 7-bit ASCII only.
 
@@ -9,7 +9,7 @@ if type(rawget(_G, KEY)) == 'table' and rawget(_G, KEY).active == true then
 end
 
 local ADDON_ID = 'mods/kugua/stim_music'
-local VERSION = '2.2.0'
+local VERSION = '2.2.1'
 
 local sr = rawget(_G, 'stingray')
 local App = sr and sr.Application
@@ -132,14 +132,39 @@ local app = ok_call(os.getenv, 'APPDATA')
 local loc = ok_call(os.getenv, 'LOCALAPPDATA')
 local tmp = ok_call(os.getenv, 'TEMP')
 
+local function ensure_dir(d)
+    if not d or d == '' then return false end
+    local probe = d .. '/.probe_test'
+    local f = io.open(probe, 'w')
+    if f then
+        f:close()
+        pcall(os.remove, probe)
+        return true
+    end
+    local win_d = d:gsub('/', '\\')
+    ok_call(os.execute, 'cmd.exe /c if not exist "' .. win_d .. '" mkdir "' .. win_d .. '"')
+    local f2 = io.open(probe, 'w')
+    if f2 then
+        f2:close()
+        pcall(os.remove, probe)
+        return true
+    end
+    return false
+end
+
+-- Primary dedicated mod directory: %LOCALAPPDATA%\MDL\Helldivers2\StimMusic
+local primary_dir = loc and (loc .. '/MDL/Helldivers2/StimMusic') or nil
+if primary_dir then
+    ensure_dir(primary_dir)
+    candidates[#candidates + 1] = primary_dir
+end
+
+-- Fallback dedicated candidate directories (ONLY StimMusic subfolders, NEVER root MDL!)
 if loc then
-    candidates[#candidates + 1] = loc .. '/MDL/Helldivers2/StimMusic'
-    candidates[#candidates + 1] = loc .. '/MDL/Helldivers2'
-    candidates[#candidates + 1] = loc .. '/CowboyBingus/Helldivers2/StimMusic'
     candidates[#candidates + 1] = loc .. '/MDL3/StimMusic'
+    candidates[#candidates + 1] = loc .. '/CowboyBingus/Helldivers2/StimMusic'
 end
 candidates[#candidates + 1] = 'C:/ProgramData/MDL/Helldivers2/StimMusic'
-candidates[#candidates + 1] = 'C:/ProgramData/MDL/Helldivers2'
 if app then
     candidates[#candidates + 1] = app .. '/Arrowhead/Helldivers2/StimMusic'
 end
@@ -148,11 +173,16 @@ if tmp then
 end
 
 for _, d in ipairs(candidates) do
+    ensure_dir(d)
     local f = io.open(d .. '/stim_music.log', 'a')
     if f then
         log_dir, log_file = d, f
         break
     end
+end
+
+if not log_dir and primary_dir then
+    log_dir = primary_dir
 end
 
 local function log_msg(line)
@@ -166,6 +196,53 @@ end
 local function log_fmt(fmt, ...)
     log_msg(string.format(fmt, ...))
 end
+
+-- Migrate stray files from root MDL directory to dedicated StimMusic directory
+local function migrate_from_root_mdl()
+    if not loc or not log_dir or log_dir == (loc .. '/MDL/Helldivers2') then return end
+    local parent = loc .. '/MDL/Helldivers2'
+    local to_migrate = {
+        'STIM_MUSIC_CONFIG.ini',
+        'stim_music.wav',
+        'stim_music_alt.wav',
+        'pi_pa.wav',
+        'pao_mo.wav',
+        'yu_ai.wav',
+    }
+    for _, fn in ipairs(to_migrate) do
+        local parent_f = parent .. '/' .. fn
+        local target_f = log_dir .. '/' .. fn
+        local fc = io.open(target_f, 'rb')
+        if not fc then
+            local fp = io.open(parent_f, 'rb')
+            if fp then
+                local data = fp:read('*a')
+                fp:close()
+                local fw = io.open(target_f, 'wb')
+                if fw then
+                    fw:write(data or '')
+                    fw:close()
+                    log_fmt('Migrated %s from root MDL to %s', fn, log_dir)
+                end
+            end
+        else
+            fc:close()
+        end
+    end
+    -- Clean up stray files in root MDL
+    local stray = {
+        'convert_track.cmd',
+        'convert_track.ps1',
+        'stim_music.log',
+        'STIM_MUSIC_STATUS.txt',
+        'STIM_MUSIC_CONFIG.ini',
+    }
+    for _, s in ipairs(stray) do
+        pcall(os.remove, parent .. '/' .. s)
+    end
+end
+
+migrate_from_root_mdl()
 
 log_fmt('=== StimMusic v%s (MDL3 + HD2 Data Hub) outdir=%s ===', VERSION, tostring(log_dir))
 
@@ -980,20 +1057,23 @@ local function locate_music_file()
         local paths = {}
         if log_dir then paths[#paths + 1] = log_dir .. '/' .. CONFIG.track end
         paths[#paths + 1] = CONFIG.track
+        for _, d in ipairs(candidates) do
+            paths[#paths + 1] = d .. '/' .. CONFIG.track
+        end
         for _, p in ipairs(paths) do
             local f = io.open(p, 'rb')
             if f then f:close(); return p end
         end
     end
-    for _, d in ipairs(candidates) do
-        local p = d .. '/stim_music.wav'
-        local f = io.open(p, 'rb')
-        if f then f:close(); return p end
-    end
-    if log_dir then
-        local names = { 'stim_music.wav', 'stim_music_alt.wav', 'yu_ai.wav', 'pao_mo.wav', 'pi_pa.wav' }
-        for _, n in ipairs(names) do
+    local names = { 'stim_music.wav', 'stim_music_alt.wav', 'yu_ai.wav', 'pao_mo.wav', 'pi_pa.wav', 'music.wav', 'bgm.wav', 'stim.wav' }
+    for _, n in ipairs(names) do
+        if log_dir then
             local p = log_dir .. '/' .. n
+            local f = io.open(p, 'rb')
+            if f then f:close(); return p end
+        end
+        for _, d in ipairs(candidates) do
+            local p = d .. '/' .. n
             local f = io.open(p, 'rb')
             if f then f:close(); return p end
         end

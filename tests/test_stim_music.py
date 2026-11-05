@@ -783,10 +783,8 @@ class TestLuaRuntimeSimulation(unittest.TestCase):
                 on = function() return {{ active = function() return true end }} end,
             }}
             """
-            # Create the candidate music folder so log_dir binds to it
-            music_sub = tmp_path / 'CowboyBingus/Helldivers2/StimMusic'
-            music_sub.mkdir(parents=True, exist_ok=True)
-            (music_sub / 'stim_music.log').write_text('')
+            # The mod creates and binds to the primary directory automatically
+            music_sub = tmp_path / 'MDL/Helldivers2/StimMusic'
 
             lua.execute(env_setup)
             src = (ROOT / 'Source/mods/kugua/stim_music.lua').read_text(encoding='ascii')
