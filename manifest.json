@@ -1,12 +1,12 @@
 {
   "Version": 1,
   "Guid": "c980dc93-4108-5742-80e4-28f6b06b928a",
-  "Name": "StimMusic v2.2.0 (打针放音乐)",
-  "Description": "需要 MDL3 + HD2 Data Hub (0.3.0+) 前置。打针（回血）触发音乐播放，支持平滑渐入渐出、毫秒级动态断点接续与音量调节。可在 ESC -> MDL 设置中调节选项。",
+  "Name": "StimMusic v2.2.0 - 打针放音乐",
+  "Description": "Requires MDL3 + HD2 Data Hub (0.3.0+). Plays custom music on stim/heal with smooth fade-in/out and dynamic sample resume. / 需要 MDL3 + HD2 Data Hub 前置。打针（回血）触发音乐播放，支持平滑渐入渐出、毫秒级断点接续与音量调节。可在 ESC -> MDL 设置中调节选项。",
   "Options": [
     {
       "Name": "StimMusic (打针放音乐)",
-      "Description": "需要 MDL3 + HD2 Data Hub (0.3.0+) 前置。打针（回血）触发音乐播放，支持平滑渐入渐出、毫秒级动态断点接续与音量调节。可在 ESC -> MDL 设置中调节选项。",
+      "Description": "Plays custom music upon stimming / healing. Supports fade in/out, volume control, and custom tracks. / 打针回血播放音乐，支持渐入渐出、音量调节与自定义音乐曲目。",
       "Include": [
         "Addon"
       ]

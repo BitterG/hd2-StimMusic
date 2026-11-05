@@ -981,6 +981,79 @@ class TestLuaRuntimeSimulation(unittest.TestCase):
             if shutdown_fn:
                 shutdown_fn()
 
+    def test_bilingual_language_switching(self):
+        """Verify mod seamlessly detects English and Chinese environments, defaulting to English."""
+        src = (ROOT / 'Source/mods/kugua/stim_music.lua').read_text(encoding='ascii')
+
+        # Scenario 1: English client (MDL3.locale = 'en_US')
+        lua_en = lupa.LuaRuntime(unpack_returned_tuples=True)
+        lua_en.execute("""
+        _G.MOCK_CALLS = { options = {} }
+        _G.MDL3 = {
+            locale = 'en_US',
+            mod_options_menu = {
+                register_option = function(id, spec)
+                    _G.MOCK_CALLS.options[id] = spec
+                    return true
+                end
+            }
+        }
+        _G.HD2Data = { api = 1, version = '0.3.0', on = function() return { active = function() return true end } end }
+        """)
+        lua_en.execute(src)
+        lua_en.globals().update(0.1)
+        opts_en = lua_en.globals().MOCK_CALLS.options
+        self.assertIn('kugua_stim_music.enabled', opts_en)
+        self.assertEqual(opts_en['kugua_stim_music.enabled'].label, 'Enabled')
+        self.assertEqual(opts_en['kugua_stim_music.enabled'].mod, 'Stim Music')
+        self.assertEqual(opts_en['kugua_stim_music.volume'].label, 'Music Volume (%)')
+
+        # Scenario 2: Chinese client (MDL3.locale = 'zh_CN')
+        lua_zh = lupa.LuaRuntime(unpack_returned_tuples=True)
+        lua_zh.execute("""
+        _G.MOCK_CALLS = { options = {} }
+        _G.MDL3 = {
+            locale = 'zh_CN',
+            mod_options_menu = {
+                register_option = function(id, spec)
+                    _G.MOCK_CALLS.options[id] = spec
+                    return true
+                end
+            }
+        }
+        _G.HD2Data = { api = 1, version = '0.3.0', on = function() return { active = function() return true end } end }
+        """)
+        lua_zh.execute(src)
+        lua_zh.globals().update(0.1)
+        opts_zh = lua_zh.globals().MOCK_CALLS.options
+        self.assertIn('kugua_stim_music.enabled', opts_zh)
+        self.assertIn('Enabled', opts_zh['kugua_stim_music.enabled'].label)
+        self.assertIn('Stim Music', opts_zh['kugua_stim_music.enabled'].mod)
+        # Should contain Chinese bytes
+        self.assertIn('总开关', opts_zh['kugua_stim_music.enabled'].label)
+
+        # Scenario 3: International akamod fallback without explicit locale -> must be English
+        lua_intl = lupa.LuaRuntime(unpack_returned_tuples=True)
+        lua_intl.execute("""
+        _G.MOCK_CALLS = { options = {} }
+        _G.MDL3 = {
+            mod_options_menu = {
+                register_option = function(id, spec)
+                    _G.MOCK_CALLS.options[id] = spec
+                    return true
+                end
+            }
+        }
+        _G.HD2Data = { api = 1, version = '0.3.0', on = function() return { active = function() return true end } end }
+        """)
+        lua_intl.execute(src)
+        lua_intl.globals().update(0.1)
+        opts_intl = lua_intl.globals().MOCK_CALLS.options
+        # Without any Chinese locale indicator, it defaults to English
+        self.assertEqual(opts_intl['kugua_stim_music.enabled'].label, 'Enabled')
+        self.assertEqual(opts_intl['kugua_stim_music.enabled'].mod, 'Stim Music')
+        self.assertEqual(opts_intl['kugua_stim_music.fade_in_ms'].label, 'Fade In (ms)')
+
 
 if __name__ == '__main__':
     unittest.main()

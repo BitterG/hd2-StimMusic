@@ -19,6 +19,19 @@ local ok_call = function(fn, ...)
     if ok then return res else return nil end
 end
 
+-- ---------------------------------------------------------------- Configuration
+local CONFIG = {
+    enabled = true,
+    volume = 100,
+    stim_ms = 6000,
+    fade_in_ms = 500,
+    fade_out_ms = 1500,
+    min_heal = 1,
+    hot_reload = true,
+    track = 'stim_music.wav',
+    language = 'auto',
+}
+
 -- String table: pure 7-bit ASCII using decimal escapes for Chinese UI labels
 local ZH = {
     mod_title = '\230\137\147\233\146\136\230\148\190\233\159\179\228\185\144 (Stim Music)',
@@ -31,11 +44,11 @@ local ZH = {
     opt_volume_desc = '\233\146\136\229\137\130\233\159\179\228\185\144\230\146\173\230\148\190\233\159\179\233\135\143 (0-100)',
     opt_stim_ms = '\233\146\136\229\137\130\230\151\182\233\149\191 (Stim Length ms)',
     opt_stim_ms_desc = '\229\141\149\230\172\161\230\137\147\233\146\136\231\148\159\230\149\136\230\140\129\231\187\173\230\151\182\233\151\180\228\184\142\233\159\179\228\185\144\230\146\173\230\148\190\231\170\151\229\143\163\239\188\136\230\175\171\231\167\146\239\188\137\227\128\130\232\176\131\230\149\180\229\144\142\228\187\141\228\188\154\230\151\160\231\188\157\230\142\165\231\187\173\228\184\138\230\172\161\230\150\173\231\130\185\227\128\130',
-    opt_fade_in = '\230\184\144\229\133\165\230\151\182\233\149\191\32\40\70\97\100\101\32\73\110\32\109\115\41',
+    opt_fade_in = '\230\184\144\229\133\165\230\151\182\233\149\191 (Fade In ms)',
     opt_fade_in_desc = '\233\159\179\228\185\144\229\188\128\229\167\139\230\146\173\230\148\190\230\151\182\231\154\132\230\183\161\229\133\165\230\151\182\233\151\180\239\188\136\230\175\171\231\167\146\239\188\137\239\188\140\48\228\184\186\231\171\139\229\141\179\229\133\168\233\159\179\233\135\143',
-    opt_fade_out = '\230\184\144\229\135\186\230\151\182\233\149\191\32\40\70\97\100\101\32\79\117\116\32\109\115\41',
+    opt_fade_out = '\230\184\144\229\135\186\230\151\182\233\149\191 (Fade Out ms)',
     opt_fade_out_desc = '\233\146\136\229\137\130\230\149\136\230\158\156\231\187\147\230\157\159\229\137\141\231\154\132\230\183\161\229\135\186\230\151\182\233\151\180\239\188\136\230\175\171\231\167\146\239\188\137\239\188\140\48\228\184\186\231\155\180\230\142\165\230\136\170\230\150\173',
-    opt_min_heal = '\230\156\128\229\176\143\229\155\158\232\161\128\233\135\143\229\136\164\229\174\154',
+    opt_min_heal = '\230\156\128\229\176\143\229\155\158\232\161\128\233\135\143\229\136\164\229\174\154 (Min Heal)',
     opt_min_heal_desc = '\229\141\149\230\172\161\229\136\164\229\174\154\233\146\136\229\137\130\231\148\159\230\149\136\231\154\132\230\156\128\229\176\143\229\155\158\232\161\128\230\149\176\229\128\188 (1-50)',
     opt_hot_reload = '\232\135\170\229\138\168\230\163\128\230\181\139\230\155\180\230\150\176 (Hot Reload)',
     opt_hot_reload_desc = '\230\163\128\230\181\139\229\136\176\233\159\179\233\162\145\230\150\135\228\187\182\230\136\150\233\133\141\231\189\174\229\143\152\230\155\180\230\151\182\232\135\170\229\138\168\233\135\141\230\150\176\232\189\189\229\133\165',
@@ -62,11 +75,49 @@ local EN = {
 }
 
 local function is_chinese_ui()
-    local mdl3 = rawget(_G, 'MDL3')
-    if type(mdl3) == 'table' and type(mdl3.locale) == 'string' then
-        return mdl3.locale:sub(1, 2) == 'zh'
+    if type(CONFIG) == 'table' and type(CONFIG.language) == 'string' then
+        local l = CONFIG.language:lower()
+        if l:find('zh') or l:find('chinese') then return true end
+        if l:find('en') or l:find('english') then return false end
     end
-    return true -- default to Chinese UI for Chinese game client
+    local mdl3 = rawget(_G, 'MDL3')
+    if type(mdl3) == 'table' then
+        if type(mdl3.locale) == 'string' and #mdl3.locale >= 2 then
+            local l = mdl3.locale:lower()
+            if l:find('zh') or l:find('chinese') then return true end
+            if l:find('en') or l:find('english') then return false end
+        end
+        local ui = type(mdl3.ui) == 'table' and mdl3.ui or (type(mdl3.config) == 'table' and mdl3.config.ui)
+        if type(ui) == 'table' and type(ui.language) == 'string' then
+            local l = ui.language:lower()
+            if l:find('zh') or l:find('chinese') then return true end
+            if l:find('en') or l:find('english') then return false end
+        end
+    end
+    local bt = rawget(_G, 'BingusTranslations')
+    if type(bt) == 'table' then
+        local lang = bt.override or bt.game_language
+        if type(lang) == 'string' and #lang >= 2 then
+            local l = lang:lower()
+            if l:find('zh') or l:find('chinese') or l:find('hans') or l:find('hant') then return true end
+            if l:find('en') or l:find('english') then return false end
+        end
+    end
+    local sr = rawget(_G, 'stingray')
+    if sr and sr.Localization and type(sr.Localization.language) == 'function' then
+        local ok, lang = pcall(sr.Localization.language)
+        if ok and type(lang) == 'string' and #lang >= 2 then
+            local l = lang:lower()
+            if l:find('zh') or l:find('chinese') or l:find('hans') or l:find('hant') then return true end
+            if l:find('en') or l:find('english') then return false end
+        end
+    end
+    local loc = ok_call(os.setlocale, nil, 'collate') or ok_call(os.setlocale, nil, 'all')
+    if type(loc) == 'string' then
+        local l = loc:lower()
+        if l:find('chinese') or l:find('china') or l:find('936') then return true end
+    end
+    return false -- default to English for international users (akamod / Nexus)
 end
 
 local function L(k)
@@ -118,17 +169,7 @@ end
 
 log_fmt('=== StimMusic v%s (MDL3 + HD2 Data Hub) outdir=%s ===', VERSION, tostring(log_dir))
 
--- ---------------------------------------------------------------- Configuration
-local CONFIG = {
-    enabled = true,
-    volume = 100,
-    stim_ms = 6000,
-    fade_in_ms = 500,
-    fade_out_ms = 1500,
-    min_heal = 1,
-    hot_reload = true,
-    track = 'stim_music.wav',
-}
+-- ---------------------------------------------------------------- Fingerprinting
 
 local function get_file_fingerprint(path)
     if not path then return nil end
@@ -228,6 +269,7 @@ local function load_ini_config()
             wf:write('min_heal = 1\n')
             wf:write('hot_reload = 1\n')
             wf:write('track = stim_music.wav\n')
+            wf:write('language = auto\n')
             wf:close()
             M.config_ini_fp = get_file_fingerprint(p)
         end
@@ -255,6 +297,7 @@ local function load_ini_config()
                 if val then CONFIG.min_heal = math.max(0, math.min(100, math.floor(val + 0.5))) end
             elseif k == 'hot_reload' then CONFIG.hot_reload = (v == '1' or v:lower() == 'true')
             elseif k == 'track' then CONFIG.track = v
+            elseif k == 'language' or k == 'locale' then CONFIG.language = v:lower()
             end
         end
     end
@@ -276,6 +319,7 @@ local function persist_ini_config()
     f:write('min_heal = ', tostring(math.floor(CONFIG.min_heal or 1)), '\n')
     f:write('hot_reload = ', CONFIG.hot_reload and '1' or '0', '\n')
     f:write('track = ', tostring(CONFIG.track or 'stim_music.wav'), '\n')
+    f:write('language = ', tostring(CONFIG.language or 'auto'), '\n')
     f:close()
     M.config_ini_fp = get_file_fingerprint(p)
 end
@@ -350,7 +394,7 @@ local function b64_decode(data)
 end
 
 local CONVERTER_CMD_B64 = 'QGVjaG8gb2ZmCmNoY3AgNjUwMDEgPm51bApwb3dlcnNoZWxsLmV4ZSAtTm9Qcm9maWxlIC1FeGVjdXRpb25Qb2xpY3kgQnlwYXNzIC1GaWxlICIlfmRwMGNvbnZlcnRfdHJhY2sucHMxIiAlKgo='
-local CONVERTER_PS1_B64 = '77u/IyBTdGltTXVzaWMgQXVkaW8gT3B0aW1pemVyICgxNi1iaXQgUENNIGZvciBNREwzIFhBdWRpbzIpDQpwYXJhbSgNCiAgICBbUGFyYW1ldGVyKFZhbHVlRnJvbVJlbWFpbmluZ0FyZ3VtZW50cyA9ICR0cnVlKV0NCiAgICBbc3RyaW5nW11dJEZpbGVzDQopDQoNCiRzY3JpcHREaXIgPSBTcGxpdC1QYXRoIC1QYXJlbnQgJE15SW52b2NhdGlvbi5NeUNvbW1hbmQuUGF0aA0KaWYgKCRzY3JpcHREaXIpIHsgU2V0LUxvY2F0aW9uICRzY3JpcHREaXIgfQ0KDQokZmZtcGVnID0gIkQ6XGZmbXBlZy03LjEuMS1lc3NlbnRpYWxzX2J1aWxkXGJpblxmZm1wZWcuZXhlIg0KaWYgKC1ub3QgKFRlc3QtUGF0aCAkZmZtcGVnKSkgew0KICAgICRmb3VuZCA9IEdldC1Db21tYW5kIGZmbXBlZyAtRXJyb3JBY3Rpb24gU2lsZW50bHlDb250aW51ZQ0KICAgIGlmICgkZm91bmQpIHsNCiAgICAgICAgJGZmbXBlZyA9ICJmZm1wZWciDQogICAgfSBlbHNlIHsNCiAgICAgICAgV3JpdGUtSG9zdCAiW+mUmeivr10g5pyq5om+5YiwIGZmbXBlZy5leGXvvIEiIC1Gb3JlZ3JvdW5kQ29sb3IgUmVkDQogICAgICAgIFdyaXRlLUhvc3QgIuivt+ehruS/nSBEOlxmZm1wZWctNy4xLjEtZXNzZW50aWFsc19idWlsZFxiaW5cZmZtcGVnLmV4ZSDlrZjlnKjmiJbphY3nva7kuobns7vnu58gUEFUSOOAgiINCiAgICAgICAgUmVhZC1Ib3N0ICLmjInlm57ovabplK7pgIDlh7ouLi4iDQogICAgICAgIGV4aXQgMQ0KICAgIH0NCn0NCg0KV3JpdGUtSG9zdCAiPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PSIgLUZvcmVncm91bmRDb2xvciBDeWFuDQpXcml0ZS1Ib3N0ICIgICBTdGltTXVzaWMg5LiT5bGe6Z+z6aKR6L2s56CB5LiO5LyY5YyW5bel5YW3ICgxNi1iaXQgUENNKSIgLUZvcmVncm91bmRDb2xvciBDeWFuDQpXcml0ZS1Ib3N0ICIgICDmlK/mjIHlkITnsbvpn7PpopHmoLzlvI/vvIzlroznvo7pgILphY0gTURMMyDljp/nlJ8gWEF1ZGlvMiDlvJXmk44iIC1Gb3JlZ3JvdW5kQ29sb3IgQ3lhbg0KV3JpdGUtSG9zdCAiPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PSIgLUZvcmVncm91bmRDb2xvciBDeWFuDQpXcml0ZS1Ib3N0ICLkvb/nlKggZmZtcGVnOiAkZmZtcGVnYG4iDQoNCiRhciA9IDQ0MTAwDQokYWMgPSAyDQoNCmlmICgtbm90ICRGaWxlcyAtb3IgJEZpbGVzLkNvdW50IC1lcSAwKSB7DQogICAgV3JpdGUtSG9zdCAi6K+36YCJ5oup6Z+z6aKR6L2s56CB6aKE6K6+ICgxMDAlIOWFvOWuuea4uOaIj+mfs+mikeW8leaTjinvvJoiIC1Gb3JlZ3JvdW5kQ29sb3IgWWVsbG93DQogICAgV3JpdGUtSG9zdCAiICBbMV0gQ0Qg6auY5riF56uL5L2T5aOwICAgKDQ0LjFrSHogMTYtYml0IOeri+S9k+WjsO+8jOaXoOaNn+mfs+i0qO+8jOaOqOiNkO+8gSkiDQogICAgV3JpdGUtSG9zdCAiICBbMl0g6L276YeP57Sn5YeR56uL5L2T5aOwICgyMi4wNWtIeiAxNi1iaXQg56uL5L2T5aOw77yM5L2T56ev5YeP5Y2K57qmIDE1TUIpIg0KICAgIFdyaXRlLUhvc3QgIiAgWzNdIOaegeiHtOWwj+S9k+enr+WNleWjsOmBkyAoMjIuMDVrSHogMTYtYml0IOWNleWjsOmBk++8jOe6piA3LjVNQu+8jE1QM+Wkp+WwjykiDQogICAgV3JpdGUtSG9zdCAiIg0KICAgICRjaG9pY2UgPSBSZWFkLUhvc3QgIuivt+i+k+WFpemAiemhuSAo55u05o6l5Zue6L2m6buY6K6k6YCJIDEgW0NE6auY5riF56uL5L2T5aOwXSkiDQoNCiAgICBpZiAoJGNob2ljZSAtZXEgIjIiKSB7DQogICAgICAgICRhciA9IDIyMDUwDQogICAgICAgICRhYyA9IDINCiAgICAgICAgV3JpdGUtSG9zdCAi5bey6YCJ5oupOiDovbvph4/ntKflh5Hnq4vkvZPlo7AgKDIyLjA1a0h6IOeri+S9k+WjsClgbiIgLUZvcmVncm91bmRDb2xvciBHcmVlbg0KICAgIH0gZWxzZWlmICgkY2hvaWNlIC1lcSAiMyIpIHsNCiAgICAgICAgJGFyID0gMjIwNTANCiAgICAgICAgJGFjID0gMQ0KICAgICAgICBXcml0ZS1Ib3N0ICLlt7LpgInmi6k6IOaegeiHtOWwj+S9k+enr+WNleWjsOmBkyAoMjIuMDVrSHog5Y2V5aOw6YGTKWBuIiAtRm9yZWdyb3VuZENvbG9yIEdyZWVuDQogICAgfSBlbHNlIHsNCiAgICAgICAgJGFyID0gNDQxMDANCiAgICAgICAgJGFjID0gMg0KICAgICAgICBXcml0ZS1Ib3N0ICLlt7LpgInmi6k6IENEIOmrmOa4heeri+S9k+WjsCAoNDQuMWtIeiDnq4vkvZPlo7ApYG4iIC1Gb3JlZ3JvdW5kQ29sb3IgR3JlZW4NCiAgICB9DQoNCiAgICAjIFN0ZXAgMTogc2NhbiBjb21wcmVzc2VkIGZpbGVzICgubTRzLCAubXAzLCAubXA0LCAuZmxhYywgLm9nZykNCiAgICAkc291cmNlRmlsZXMgPSBHZXQtQ2hpbGRJdGVtIC1GaWxlIHwgV2hlcmUtT2JqZWN0IHsgJF8uRXh0ZW5zaW9uIC1lcSAiLm1wMyIgLW9yICRfLkV4dGVuc2lvbiAtZXEgIi5tNHMiIC1vciAkXy5FeHRlbnNpb24gLWVxICIubXA0IiAtb3IgJF8uRXh0ZW5zaW9uIC1lcSAiLmZsYWMiIC1vciAkXy5FeHRlbnNpb24gLWVxICIub2dnIiB9DQogICAgZm9yZWFjaCAoJGYgaW4gJHNvdXJjZUZpbGVzKSB7DQogICAgICAgICRvdXROYW1lID0gIiQoJGYuQmFzZU5hbWUpLndhdiINCiAgICAgICAgV3JpdGUtSG9zdCAi5q2j5Zyo6L2s56CB6L2s5o2iOiAkKCRmLk5hbWUpIC0+ICRvdXROYW1lIiAtRm9yZWdyb3VuZENvbG9yIFllbGxvdw0KICAgICAgICAmICRmZm1wZWcgLXkgLXYgd2FybmluZyAtaSAkZi5GdWxsTmFtZSAtbWFwIDA6YTowPyAtYWMgJGFjIC1hciAkYXIgLWM6YSBwY21fczE2bGUgJG91dE5hbWUNCiAgICAgICAgaWYgKCRMQVNURVhJVENPREUgLWVxIDApIHsNCiAgICAgICAgICAgICRuZXdTaXplTUIgPSBbbWF0aF06OlJvdW5kKChHZXQtSXRlbSAkb3V0TmFtZSkuTGVuZ3RoIC8gMU1CLCAyKQ0KICAgICAgICAgICAgV3JpdGUtSG9zdCAiICBb5oiQ5YqfXSAkb3V0TmFtZSDlt7LnlJ/miJDvvIzkvZPnp686ICRuZXdTaXplTUIgTUIiIC1Gb3JlZ3JvdW5kQ29sb3IgR3JlZW4NCiAgICAgICAgfSBlbHNlIHsNCiAgICAgICAgICAgIFdyaXRlLUhvc3QgIiAgW+Wksei0pV0g6L2s5o2iICQoJGYuTmFtZSkg5aSx6LSlIiAtRm9yZWdyb3VuZENvbG9yIFJlZA0KICAgICAgICB9DQogICAgfQ0KDQogICAgIyBTdGVwIDI6IHNjYW4gZXhpc3RpbmcgV0FWIGZpbGVzIGFuZCBvcHRpbWl6ZQ0KICAgICR3YXZGaWxlcyA9IEdldC1DaGlsZEl0ZW0gLUZpbGUgLUZpbHRlciAiKi53YXYiIHwgV2hlcmUtT2JqZWN0IHsgLW5vdCAkXy5OYW1lLkVuZHNXaXRoKCJfcGNtX3RtcC53YXYiKSB9DQogICAgZm9yZWFjaCAoJHcgaW4gJHdhdkZpbGVzKSB7DQogICAgICAgICRvbGRTaXplTUIgPSBbbWF0aF06OlJvdW5kKCR3Lkxlbmd0aCAvIDFNQiwgMikNCiAgICAgICAgJHRtcE5hbWUgPSAiJCgkdy5CYXNlTmFtZSlfcGNtX3RtcC53YXYiDQogICAgICAgIFdyaXRlLUhvc3QgIuato+WcqOS8mOWMlui9rOaNojogJCgkdy5OYW1lKSAo5b2T5YmN5L2T56evOiAkb2xkU2l6ZU1CIE1CKS4uLiIgLUZvcmVncm91bmRDb2xvciBZZWxsb3cNCiAgICAgICAgJiAkZmZtcGVnIC15IC12IHdhcm5pbmcgLWkgJHcuRnVsbE5hbWUgLW1hcCAwOmE6MD8gLWFjICRhYyAtYXIgJGFyIC1jOmEgcGNtX3MxNmxlICR0bXBOYW1lDQogICAgICAgIGlmICgkTEFTVEVYSVRDT0RFIC1lcSAwIC1hbmQgKFRlc3QtUGF0aCAkdG1wTmFtZSkpIHsNCiAgICAgICAgICAgICRuZXdTaXplTUIgPSBbbWF0aF06OlJvdW5kKChHZXQtSXRlbSAkdG1wTmFtZSkuTGVuZ3RoIC8gMU1CLCAyKQ0KICAgICAgICAgICAgTW92ZS1JdGVtIC1QYXRoICR0bXBOYW1lIC1EZXN0aW5hdGlvbiAkdy5GdWxsTmFtZSAtRm9yY2UNCiAgICAgICAgICAgIFdyaXRlLUhvc3QgIiAgW+WujOaIkF0gJCgkdy5OYW1lKSDlt7LovazkuLrlhbzlrrkgMTYtYml0IFBDTTogJG9sZFNpemVNQiBNQiAtPiAkbmV3U2l6ZU1CIE1C77yBIiAtRm9yZWdyb3VuZENvbG9yIEdyZWVuDQogICAgICAgIH0NCiAgICB9DQoNCiAgICBXcml0ZS1Ib3N0ICJgbj09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0iIC1Gb3JlZ3JvdW5kQ29sb3IgQ3lhbg0KICAgIFdyaXRlLUhvc3QgIuaJgOaciemfs+mikeWkhOeQhuWujOaIkO+8gee6r+atoyAxNi1iaXQgUENN77yM5pCt6YWN5YiG5q615rWB5byP5Yqg6L2977yM6Zu25Y2h6aG/5rWB55WF5pKt5pS+44CCIiAtRm9yZWdyb3VuZENvbG9yIEN5YW4NCiAgICBXcml0ZS1Ib3N0ICI9PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09IiAtRm9yZWdyb3VuZENvbG9yIEN5YW4NCiAgICBSZWFkLUhvc3QgIuaMieWbnui9pumUrumAgOWHui4uLiINCn0gZWxzZSB7DQogICAgV3JpdGUtSG9zdCAiW+aLluaLveaooeW8j10g5q2j5Zyo5LulIENEIOmrmOa4heeri+S9k+WjsCAoNDQuMWtIeiAxNi1iaXQgUENNKSDovazmjaLkvKDlhaXnmoTmlofku7YuLi4iIC1Gb3JlZ3JvdW5kQ29sb3IgWWVsbG93DQogICAgZm9yZWFjaCAoJGZpbGUgaW4gJEZpbGVzKSB7DQogICAgICAgIGlmIChUZXN0LVBhdGggJGZpbGUpIHsNCiAgICAgICAgICAgICRpdGVtID0gR2V0LUl0ZW0gJGZpbGUNCiAgICAgICAgICAgICRvdXRQYXRoID0gSm9pbi1QYXRoICRpdGVtLkRpcmVjdG9yeU5hbWUgIiQoJGl0ZW0uQmFzZU5hbWUpLndhdiINCiAgICAgICAgICAgIFdyaXRlLUhvc3QgIuato+WcqOi9rOaNojogJCgkaXRlbS5OYW1lKSAtPiAkKCRpdGVtLkJhc2VOYW1lKS53YXYiIC1Gb3JlZ3JvdW5kQ29sb3IgWWVsbG93DQogICAgICAgICAgICAmICRmZm1wZWcgLXkgLXYgd2FybmluZyAtaSAkaXRlbS5GdWxsTmFtZSAtbWFwIDA6YTowPyAtYWMgJGFjIC1hciAkYXIgLWM6YSBwY21fczE2bGUgJG91dFBhdGgNCiAgICAgICAgICAgIGlmICgkTEFTVEVYSVRDT0RFIC1lcSAwKSB7DQogICAgICAgICAgICAgICAgJHN6TUIgPSBbbWF0aF06OlJvdW5kKChHZXQtSXRlbSAkb3V0UGF0aCkuTGVuZ3RoIC8gMU1CLCAyKQ0KICAgICAgICAgICAgICAgIFdyaXRlLUhvc3QgIiAgW+aIkOWKn10g5bey55Sf5oiQICQoJGl0ZW0uQmFzZU5hbWUpLndhdiAoJHN6TUIgTUIpIiAtRm9yZWdyb3VuZENvbG9yIEdyZWVuDQogICAgICAgICAgICB9IGVsc2Ugew0KICAgICAgICAgICAgICAgIFdyaXRlLUhvc3QgIiAgW+Wksei0pV0g6L2s5o2iICQoJGl0ZW0uTmFtZSkg5aSx6LSlIiAtRm9yZWdyb3VuZENvbG9yIFJlZA0KICAgICAgICAgICAgfQ0KICAgICAgICB9DQogICAgfQ0KICAgIFJlYWQtSG9zdCAi5oyJ5Zue6L2m6ZSu6YCA5Ye6Li4uIg0KfQ0K'
+local CONVERTER_PS1_B64 = 'IyBTdGltTXVzaWMgQXVkaW8gT3B0aW1pemVyICgxNi1iaXQgUENNIGZvciBNREwzIFhBdWRpbzIpCnBhcmFtKAogICAgW1BhcmFtZXRlcihWYWx1ZUZyb21SZW1haW5pbmdBcmd1bWVudHMgPSAkdHJ1ZSldCiAgICBbc3RyaW5nW11dJEZpbGVzCikKCiRzY3JpcHREaXIgPSBTcGxpdC1QYXRoIC1QYXJlbnQgJE15SW52b2NhdGlvbi5NeUNvbW1hbmQuUGF0aAppZiAoJHNjcmlwdERpcikgeyBTZXQtTG9jYXRpb24gJHNjcmlwdERpciB9CgokZmZtcGVnID0gIkQ6XGZmbXBlZy03LjEuMS1lc3NlbnRpYWxzX2J1aWxkXGJpblxmZm1wZWcuZXhlIgppZiAoLW5vdCAoVGVzdC1QYXRoICRmZm1wZWcpKSB7CiAgICAkZm91bmQgPSBHZXQtQ29tbWFuZCBmZm1wZWcgLUVycm9yQWN0aW9uIFNpbGVudGx5Q29udGludWUKICAgIGlmICgkZm91bmQpIHsKICAgICAgICAkZmZtcGVnID0gImZmbXBlZyIKICAgIH0gZWxzZSB7CiAgICAgICAgV3JpdGUtSG9zdCAiW0VSUk9SIC8g6ZSZ6K+vXSBmZm1wZWcuZXhlIG5vdCBmb3VuZCAvIOacquaJvuWIsCBmZm1wZWcuZXhl77yBIiAtRm9yZWdyb3VuZENvbG9yIFJlZAogICAgICAgIFdyaXRlLUhvc3QgIlBsZWFzZSBlbnN1cmUgZmZtcGVnIGlzIGluc3RhbGxlZCBhbmQgaW4gUEFUSCwgb3IgYXQgRDpcZmZtcGVnLTcuMS4xLWVzc2VudGlhbHNfYnVpbGRcYmluXGZmbXBlZy5leGUuIgogICAgICAgIFdyaXRlLUhvc3QgIuivt+ehruS/neezu+e7n+W3suWuieijhSBmZm1wZWcg5bm26YWN572u546v5aKD5Y+Y6YePIFBBVEjjgIIiCiAgICAgICAgUmVhZC1Ib3N0ICJQcmVzcyBFbnRlciB0byBleGl0IC8g5oyJ5Zue6L2m6ZSu6YCA5Ye6Li4uIgogICAgICAgIGV4aXQgMQogICAgfQp9CgpXcml0ZS1Ib3N0ICI9PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09IiAtRm9yZWdyb3VuZENvbG9yIEN5YW4KV3JpdGUtSG9zdCAiICAgU3RpbU11c2ljIEF1ZGlvIENvbnZlcnRlciAmIE9wdGltaXplciAoMTYtYml0IFBDTSBmb3IgTURMMyBYQXVkaW8yKSIgLUZvcmVncm91bmRDb2xvciBDeWFuCldyaXRlLUhvc3QgIiAgIOmfs+mikei9rOeggeS4juS8mOWMluW3peWFtyB8IOWujOe+jumAgumFjSBNREwzIOWOn+eUnyBYQXVkaW8yIOmfs+mikeW8leaTjiIgLUZvcmVncm91bmRDb2xvciBDeWFuCldyaXRlLUhvc3QgIj09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0iIC1Gb3JlZ3JvdW5kQ29sb3IgQ3lhbgpXcml0ZS1Ib3N0ICJVc2luZyBmZm1wZWc6ICRmZm1wZWdgbiIKCiRhciA9IDQ0MTAwCiRhYyA9IDIKCmlmICgtbm90ICRGaWxlcyAtb3IgJEZpbGVzLkNvdW50IC1lcSAwKSB7CiAgICBXcml0ZS1Ib3N0ICJTZWxlY3QgQXVkaW8gUHJlc2V0IC8g6K+36YCJ5oup6Z+z6aKR6L2s56CB6aKE6K6+ICgxMDAlIGNvbXBhdGlibGUpOiIgLUZvcmVncm91bmRDb2xvciBZZWxsb3cKICAgIFdyaXRlLUhvc3QgIiAgWzFdIENEIEhpLUZpIFN0ZXJlbyAgICg0NC4xa0h6IDE2LWJpdCBTdGVyZW8sIGxvc3NsZXNzIC8g5peg5o2f6Z+z6LSo77yM5o6o6I2Q77yBKSIKICAgIFdyaXRlLUhvc3QgIiAgWzJdIENvbXBhY3QgU3RlcmVvICAgICgyMi4wNWtIeiAxNi1iaXQgU3RlcmVvLCBoYWxmIHNpemUgfjE1TUIgLyDkvZPnp6/lh4/ljYopIgogICAgV3JpdGUtSG9zdCAiICBbM10gVWx0cmEtbGlnaHQgTW9ubyAgKDIyLjA1a0h6IDE2LWJpdCBNb25vLCB+Ny41TUIgLyDmnoHoh7TlsI/kvZPnp68pIgogICAgV3JpdGUtSG9zdCAiIgogICAgJGNob2ljZSA9IFJlYWQtSG9zdCAiSW5wdXQgb3B0aW9uIC8g6K+36L6T5YWl6YCJ6aG5IFsxLTNdIChEZWZhdWx0IC8g6buY6K6k6YCJIDEpIgoKICAgIGlmICgkY2hvaWNlIC1lcSAiMiIpIHsKICAgICAgICAkYXIgPSAyMjA1MAogICAgICAgICRhYyA9IDIKICAgICAgICBXcml0ZS1Ib3N0ICJTZWxlY3RlZDogQ29tcGFjdCBTdGVyZW8gKDIyLjA1a0h6IFN0ZXJlbylgbiIgLUZvcmVncm91bmRDb2xvciBHcmVlbgogICAgfSBlbHNlaWYgKCRjaG9pY2UgLWVxICIzIikgewogICAgICAgICRhciA9IDIyMDUwCiAgICAgICAgJGFjID0gMQogICAgICAgIFdyaXRlLUhvc3QgIlNlbGVjdGVkOiBVbHRyYS1saWdodCBNb25vICgyMi4wNWtIeiBNb25vKWBuIiAtRm9yZWdyb3VuZENvbG9yIEdyZWVuCiAgICB9IGVsc2UgewogICAgICAgICRhciA9IDQ0MTAwCiAgICAgICAgJGFjID0gMgogICAgICAgIFdyaXRlLUhvc3QgIlNlbGVjdGVkOiBDRCBIaS1GaSBTdGVyZW8gKDQ0LjFrSHogU3RlcmVvKWBuIiAtRm9yZWdyb3VuZENvbG9yIEdyZWVuCiAgICB9CgogICAgIyBTdGVwIDE6IHNjYW4gY29tcHJlc3NlZCBmaWxlcyAoLm00cywgLm1wMywgLm1wNCwgLmZsYWMsIC5vZ2cpCiAgICAkc291cmNlRmlsZXMgPSBHZXQtQ2hpbGRJdGVtIC1GaWxlIHwgV2hlcmUtT2JqZWN0IHsgJF8uRXh0ZW5zaW9uIC1lcSAiLm1wMyIgLW9yICRfLkV4dGVuc2lvbiAtZXEgIi5tNHMiIC1vciAkXy5FeHRlbnNpb24gLWVxICIubXA0IiAtb3IgJF8uRXh0ZW5zaW9uIC1lcSAiLmZsYWMiIC1vciAkXy5FeHRlbnNpb24gLWVxICIub2dnIiB9CiAgICBmb3JlYWNoICgkZiBpbiAkc291cmNlRmlsZXMpIHsKICAgICAgICAkb3V0TmFtZSA9ICIkKCRmLkJhc2VOYW1lKS53YXYiCiAgICAgICAgV3JpdGUtSG9zdCAiQ29udmVydGluZyAvIOato+WcqOi9rOeggei9rOaNojogJCgkZi5OYW1lKSAtPiAkb3V0TmFtZSIgLUZvcmVncm91bmRDb2xvciBZZWxsb3cKICAgICAgICAmICRmZm1wZWcgLXkgLXYgd2FybmluZyAtaSAkZi5GdWxsTmFtZSAtbWFwIDA6YTowPyAtYWMgJGFjIC1hciAkYXIgLWM6YSBwY21fczE2bGUgJG91dE5hbWUKICAgICAgICBpZiAoJExBU1RFWElUQ09ERSAtZXEgMCkgewogICAgICAgICAgICAkbmV3U2l6ZU1CID0gW21hdGhdOjpSb3VuZCgoR2V0LUl0ZW0gJG91dE5hbWUpLkxlbmd0aCAvIDFNQiwgMikKICAgICAgICAgICAgV3JpdGUtSG9zdCAiICBbT0sgLyDmiJDlip9dICRvdXROYW1lIGdlbmVyYXRlZCAoJG5ld1NpemVNQiBNQikiIC1Gb3JlZ3JvdW5kQ29sb3IgR3JlZW4KICAgICAgICB9IGVsc2UgewogICAgICAgICAgICBXcml0ZS1Ib3N0ICIgIFtGQUlMRUQgLyDlpLHotKVdIEZhaWxlZCB0byBjb252ZXJ0ICQoJGYuTmFtZSkiIC1Gb3JlZ3JvdW5kQ29sb3IgUmVkCiAgICAgICAgfQogICAgfQoKICAgICMgU3RlcCAyOiBzY2FuIGV4aXN0aW5nIFdBViBmaWxlcyBhbmQgb3B0aW1pemUKICAgICR3YXZGaWxlcyA9IEdldC1DaGlsZEl0ZW0gLUZpbGUgLUZpbHRlciAiKi53YXYiIHwgV2hlcmUtT2JqZWN0IHsgLW5vdCAkXy5OYW1lLkVuZHNXaXRoKCJfcGNtX3RtcC53YXYiKSB9CiAgICBmb3JlYWNoICgkdyBpbiAkd2F2RmlsZXMpIHsKICAgICAgICAkb2xkU2l6ZU1CID0gW21hdGhdOjpSb3VuZCgkdy5MZW5ndGggLyAxTUIsIDIpCiAgICAgICAgJHRtcE5hbWUgPSAiJCgkdy5CYXNlTmFtZSlfcGNtX3RtcC53YXYiCiAgICAgICAgV3JpdGUtSG9zdCAiT3B0aW1pemluZyAvIOato+WcqOS8mOWMlui9rOaNojogJCgkdy5OYW1lKSAoJG9sZFNpemVNQiBNQikuLi4iIC1Gb3JlZ3JvdW5kQ29sb3IgWWVsbG93CiAgICAgICAgJiAkZmZtcGVnIC15IC12IHdhcm5pbmcgLWkgJHcuRnVsbE5hbWUgLW1hcCAwOmE6MD8gLWFjICRhYyAtYXIgJGFyIC1jOmEgcGNtX3MxNmxlICR0bXBOYW1lCiAgICAgICAgaWYgKCRMQVNURVhJVENPREUgLWVxIDAgLWFuZCAoVGVzdC1QYXRoICR0bXBOYW1lKSkgewogICAgICAgICAgICAkbmV3U2l6ZU1CID0gW21hdGhdOjpSb3VuZCgoR2V0LUl0ZW0gJHRtcE5hbWUpLkxlbmd0aCAvIDFNQiwgMikKICAgICAgICAgICAgTW92ZS1JdGVtIC1QYXRoICR0bXBOYW1lIC1EZXN0aW5hdGlvbiAkdy5GdWxsTmFtZSAtRm9yY2UKICAgICAgICAgICAgV3JpdGUtSG9zdCAiICBbRE9ORSAvIOWujOaIkF0gJCgkdy5OYW1lKSAtPiAxNi1iaXQgUENNOiAkb2xkU2l6ZU1CIE1CIC0+ICRuZXdTaXplTUIgTUIiIC1Gb3JlZ3JvdW5kQ29sb3IgR3JlZW4KICAgICAgICB9CiAgICB9CgogICAgV3JpdGUtSG9zdCAiYG49PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09IiAtRm9yZWdyb3VuZENvbG9yIEN5YW4KICAgIFdyaXRlLUhvc3QgIkFsbCBhdWRpbyBmaWxlcyBwcm9jZXNzZWQhIFB1cmUgMTYtYml0IFBDTSBmb3Igc3R1dHRlci1mcmVlIHBsYXliYWNrLiIgLUZvcmVncm91bmRDb2xvciBDeWFuCiAgICBXcml0ZS1Ib3N0ICLmiYDmnInpn7PpopHovaznoIHlrozmiJDvvIHpq5jkv53nnJ8gMTYtYml0IFBDTe+8jOmbtuWNoemhv+a1geeVheaSreaUvuOAgiIgLUZvcmVncm91bmRDb2xvciBDeWFuCiAgICBXcml0ZS1Ib3N0ICI9PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09IiAtRm9yZWdyb3VuZENvbG9yIEN5YW4KICAgIFJlYWQtSG9zdCAiUHJlc3MgRW50ZXIgdG8gZXhpdCAvIOaMieWbnui9pumUrumAgOWHui4uLiIKfSBlbHNlIHsKICAgIFdyaXRlLUhvc3QgIltEcmFnICYgRHJvcCBNb2RlIC8g5ouW5ou95qih5byPXSBDb252ZXJ0aW5nIGZpbGVzIHRvIENEIEhpLUZpIFN0ZXJlbyAoNDQuMWtIeiAxNi1iaXQgUENNKS4uLiIgLUZvcmVncm91bmRDb2xvciBZZWxsb3cKICAgIGZvcmVhY2ggKCRmaWxlIGluICRGaWxlcykgewogICAgICAgIGlmIChUZXN0LVBhdGggJGZpbGUpIHsKICAgICAgICAgICAgJGl0ZW0gPSBHZXQtSXRlbSAkZmlsZQogICAgICAgICAgICAkb3V0UGF0aCA9IEpvaW4tUGF0aCAkaXRlbS5EaXJlY3RvcnlOYW1lICIkKCRpdGVtLkJhc2VOYW1lKS53YXYiCiAgICAgICAgICAgIFdyaXRlLUhvc3QgIkNvbnZlcnRpbmcgLyDmraPlnKjovazmjaI6ICQoJGl0ZW0uTmFtZSkgLT4gJCgkaXRlbS5CYXNlTmFtZSkud2F2IiAtRm9yZWdyb3VuZENvbG9yIFllbGxvdwogICAgICAgICAgICAmICRmZm1wZWcgLXkgLXYgd2FybmluZyAtaSAkaXRlbS5GdWxsTmFtZSAtbWFwIDA6YTowPyAtYWMgJGFjIC1hciAkYXIgLWM6YSBwY21fczE2bGUgJG91dFBhdGgKICAgICAgICAgICAgaWYgKCRMQVNURVhJVENPREUgLWVxIDApIHsKICAgICAgICAgICAgICAgICRzek1CID0gW21hdGhdOjpSb3VuZCgoR2V0LUl0ZW0gJG91dFBhdGgpLkxlbmd0aCAvIDFNQiwgMikKICAgICAgICAgICAgICAgIFdyaXRlLUhvc3QgIiAgW09LIC8g5oiQ5YqfXSBHZW5lcmF0ZWQgJCgkaXRlbS5CYXNlTmFtZSkud2F2ICgkc3pNQiBNQikiIC1Gb3JlZ3JvdW5kQ29sb3IgR3JlZW4KICAgICAgICAgICAgfSBlbHNlIHsKICAgICAgICAgICAgICAgIFdyaXRlLUhvc3QgIiAgW0ZBSUxFRCAvIOWksei0pV0gRmFpbGVkIHRvIGNvbnZlcnQgJCgkaXRlbS5OYW1lKSIgLUZvcmVncm91bmRDb2xvciBSZWQKICAgICAgICAgICAgfQogICAgICAgIH0KICAgIH0KICAgIFJlYWQtSG9zdCAiUHJlc3MgRW50ZXIgdG8gZXhpdCAvIOaMieWbnui9pumUrumAgOWHui4uLiIKfQo='
 
 local function ensure_converter_scripts()
     if not log_dir then return end

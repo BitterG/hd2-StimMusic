@@ -100,3 +100,98 @@
   游戏运行时自动记录当前播放状态、生效曲目、断点位置、针剂计数、Hub 连接等。
 - **运行日志文件**：
   `%LOCALAPPDATA%\MDL\Helldivers2\StimMusic\stim_music.log`
+
+---
+
+# StimMusic v2.2.0 — Stim & Healing Music Player (English Guide)
+
+> StimMusic is a lightweight, modern audio enhancement mod built for **MDL3 (3.0.0-dev.21+)** and **HD2 Data Hub (0.3.0+)**.
+> Written in 100% pure PUC Lua 5.1 with zero FFI, zero memory patching, and full game patch resilience.
+
+---
+
+## 1. Features
+
+1. **Smooth Fade In & Fade Out**:
+   - Independently configurable fade-in and fade-out durations in milliseconds.
+   - Intelligent chaining: stimming during music playback seamlessly sustains 100% volume without cutting or dipping; stimming during fade-out smoothly ramps volume back up.
+2. **Sample-Accurate Resume**:
+   - Stim playback resumes exactly where it left off, listening through entire songs across multiple stims before looping.
+   - Adjusting stim playback duration in the in-game menu never shifts or breaks your playback position.
+3. **Multi-Track Hot-Switching**:
+   - Place multiple `.wav` songs in the folder; easily pick and switch tracks on the fly in the in-game ESC menu with zero stutter.
+4. **Bilingual UI (English & Chinese)**:
+   - Automatically detects your game / MDL client language. Displays English on English/international clients and Chinese on Chinese clients.
+   - Can also be forced via `language = en` or `language = zh` in `STIM_MUSIC_CONFIG.ini`.
+5. **One-Click Audio Converter Included**:
+   - Includes `convert_track.cmd` and `convert_track.ps1` to convert any audio (.mp3, .flac, .ogg, .m4s, etc.) into high-fidelity 16-bit PCM WAV with one click or drag-and-drop.
+
+---
+
+## 2. Requirements & Installation
+
+### Requirements
+- **MDL3** (v3.0.0-dev.21 or later)
+- **HD2 Data Hub** (v0.3.0 or later, `HD2Data` API 1)
+
+*(Legacy loaders like Bingus Shared Loader or HD2Runtime are NOT required).*
+
+### Installation
+- **Arsenal Mod Manager (Recommended)**:
+  Drag and drop `StimMusic-2.2.0.zip` into Arsenal Mod Manager, enable it, and click **Deploy**.
+- **Manual Installation**:
+  Extract `Addon/9ba626afa44a3aa3.patch_0` (along with its companion files `.gpu_resources` and `.stream`) into your Helldivers 2 game directory: `Helldivers 2\data\`. If `patch_0` already exists, you can rename it to `patch_1`, `patch_2`, etc.
+
+---
+
+## 3. Music Folder & Audio Format
+
+### Where to put your music:
+Place your music files in the MDL standard folder:
+```text
+%LOCALAPPDATA%\MDL\Helldivers2\StimMusic\
+```
+*(Paste the above path into Windows Explorer address bar and press Enter; typical path: `C:\Users\<YourUsername>\AppData\Local\MDL\Helldivers2\StimMusic\`)*
+
+### Supported Audio Format:
+- **Standard 16-bit PCM WAV** (Mono or Stereo, 22.05kHz or 44.1kHz recommended).
+- **Default filename**: `stim_music.wav`.
+- **Multiple songs**: You can put multiple `.wav` files into the folder and switch between them in the in-game menu.
+- **Audio Converter**:
+  Double-click `convert_track.cmd` or drag any audio file onto it to convert it instantly to compatible 16-bit PCM WAV.
+
+---
+
+## 4. In-Game Settings Menu (ESC Menu)
+
+Press `ESC` in-game -> Open **MDL Settings** -> Select **Stim Music**:
+
+| Option | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| **Enabled** | Toggle | On | Master toggle for Stim Music playback. |
+| **Music Track** | Choice | Auto | Switch active music track from files found in the music folder. |
+| **Music Volume (%)** | Slider | 100% | Adjust playback volume (0 - 100%) independently. |
+| **Stim Length (ms)** | Slider | 6000ms | Playback window per stim (in ms). Resume point is preserved. |
+| **Fade In (ms)** | Slider | 500ms | Volume fade-in transition duration (0 = immediate full volume). |
+| **Fade Out (ms)** | Slider | 1500ms | Volume fade-out transition duration (0 = hard cut). |
+| **Minimum Heal Threshold** | Slider | 1 | Minimum health gain required to trigger stim music (1-50). |
+| **Hot Reload** | Toggle | On | Periodically checks music file and INI changes without restart. |
+
+---
+
+## 5. Configuration File (`STIM_MUSIC_CONFIG.ini`)
+
+Located at `%LOCALAPPDATA%\MDL\Helldivers2\StimMusic\STIM_MUSIC_CONFIG.ini`.
+Settings are automatically updated when modified in the in-game menu:
+```ini
+# StimMusic configuration
+enabled = 1
+volume = 100
+stim_ms = 6000
+fade_in_ms = 500
+fade_out_ms = 1500
+min_heal = 1
+hot_reload = 1
+track = stim_music.wav
+language = auto  # auto, en, or zh
+```

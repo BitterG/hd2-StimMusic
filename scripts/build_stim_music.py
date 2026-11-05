@@ -86,6 +86,19 @@ local ok_call = function(fn, ...)
     if ok then return res else return nil end
 end
 
+-- ---------------------------------------------------------------- Configuration
+local CONFIG = {{
+    enabled = true,
+    volume = 100,
+    stim_ms = 6000,
+    fade_in_ms = 500,
+    fade_out_ms = 1500,
+    min_heal = 1,
+    hot_reload = true,
+    track = 'stim_music.wav',
+    language = 'auto',
+}}
+
 -- String table: pure 7-bit ASCII using decimal escapes for Chinese UI labels
 local ZH = {{
     mod_title = '\\230\\137\\147\\233\\146\\136\\230\\148\\190\\233\\159\\179\\228\\185\\144 (Stim Music)',
@@ -98,11 +111,11 @@ local ZH = {{
     opt_volume_desc = '\\233\\146\\136\\229\\137\\130\\233\\159\\179\\228\\185\\144\\230\\146\\173\\230\\148\\190\\233\\159\\179\\233\\135\\143 (0-100)',
     opt_stim_ms = '\\233\\146\\136\\229\\137\\130\\230\\151\\182\\233\\149\\191 (Stim Length ms)',
     opt_stim_ms_desc = '\\229\\141\\149\\230\\172\\161\\230\\137\\147\\233\\146\\136\\231\\148\\159\\230\\149\\136\\230\\140\\129\\231\\187\\173\\230\\151\\182\\233\\151\\180\\228\\184\\142\\233\\159\\179\\228\\185\\144\\230\\146\\173\\230\\148\\190\\231\\170\\151\\229\\143\\163\\239\\188\\136\\230\\175\\171\\231\\167\\146\\239\\188\\137\\227\\128\\130\\232\\176\\131\\230\\149\\180\\229\\144\\142\\228\\187\\141\\228\\188\\154\\230\\151\\160\\231\\188\\157\\230\\142\\165\\231\\187\\173\\228\\184\\138\\230\\172\\161\\230\\150\\173\\231\\130\\185\\227\\128\\130',
-    opt_fade_in = '\\230\\184\\144\\229\\133\\165\\230\\151\\182\\233\\149\\191\\32\\40\\70\\97\\100\\101\\32\\73\\110\\32\\109\\115\\41',
+    opt_fade_in = '\\230\\184\\144\\229\\133\\165\\230\\151\\182\\233\\149\\191 (Fade In ms)',
     opt_fade_in_desc = '\\233\\159\\179\\228\\185\\144\\229\\188\\128\\229\\167\\139\\230\\146\\173\\230\\148\\190\\230\\151\\182\\231\\154\\132\\230\\183\\161\\229\\133\\165\\230\\151\\182\\233\\151\\180\\239\\188\\136\\230\\175\\171\\231\\167\\146\\239\\188\\137\\239\\188\\140\\48\\228\\184\\186\\231\\171\\139\\229\\141\\179\\229\\133\\168\\233\\159\\179\\233\\135\\143',
-    opt_fade_out = '\\230\\184\\144\\229\\135\\186\\230\\151\\182\\233\\149\\191\\32\\40\\70\\97\\100\\101\\32\\79\\117\\116\\32\\109\\115\\41',
+    opt_fade_out = '\\230\\184\\144\\229\\135\\186\\230\\151\\182\\233\\149\\191 (Fade Out ms)',
     opt_fade_out_desc = '\\233\\146\\136\\229\\137\\130\\230\\149\\136\\230\\158\\156\\231\\187\\147\\230\\157\\159\\229\\137\\141\\231\\154\\132\\230\\183\\161\\229\\135\\186\\230\\151\\182\\233\\151\\180\\239\\188\\136\\230\\175\\171\\231\\167\\146\\239\\188\\137\\239\\188\\140\\48\\228\\184\\186\\231\\155\\180\\230\\142\\165\\230\\136\\170\\230\\150\\173',
-    opt_min_heal = '\\230\\156\\128\\229\\176\\143\\229\\155\\158\\232\\161\\128\\233\\135\\143\\229\\136\\164\\229\\174\\154',
+    opt_min_heal = '\\230\\156\\128\\229\\176\\143\\229\\155\\158\\232\\161\\128\\233\\135\\143\\229\\136\\164\\229\\174\\154 (Min Heal)',
     opt_min_heal_desc = '\\229\\141\\149\\230\\172\\161\\229\\136\\164\\229\\174\\154\\233\\146\\136\\229\\137\\130\\231\\148\\159\\230\\149\\136\\231\\154\\132\\230\\156\\128\\229\\176\\143\\229\\155\\158\\232\\161\\128\\230\\149\\176\\229\\128\\188 (1-50)',
     opt_hot_reload = '\\232\\135\\170\\229\\138\\168\\230\\163\\128\\230\\181\\139\\230\\155\\180\\230\\150\\176 (Hot Reload)',
     opt_hot_reload_desc = '\\230\\163\\128\\230\\181\\139\\229\\136\\176\\233\\159\\179\\233\\162\\145\\230\\150\\135\\228\\187\\182\\230\\136\\150\\233\\133\\141\\231\\189\\174\\229\\143\\152\\230\\155\\180\\230\\151\\182\\232\\135\\170\\229\\138\\168\\233\\135\\141\\230\\150\\176\\232\\189\\189\\229\\133\\165',
@@ -129,11 +142,49 @@ local EN = {{
 }}
 
 local function is_chinese_ui()
-    local mdl3 = rawget(_G, 'MDL3')
-    if type(mdl3) == 'table' and type(mdl3.locale) == 'string' then
-        return mdl3.locale:sub(1, 2) == 'zh'
+    if type(CONFIG) == 'table' and type(CONFIG.language) == 'string' then
+        local l = CONFIG.language:lower()
+        if l:find('zh') or l:find('chinese') then return true end
+        if l:find('en') or l:find('english') then return false end
     end
-    return true -- default to Chinese UI for Chinese game client
+    local mdl3 = rawget(_G, 'MDL3')
+    if type(mdl3) == 'table' then
+        if type(mdl3.locale) == 'string' and #mdl3.locale >= 2 then
+            local l = mdl3.locale:lower()
+            if l:find('zh') or l:find('chinese') then return true end
+            if l:find('en') or l:find('english') then return false end
+        end
+        local ui = type(mdl3.ui) == 'table' and mdl3.ui or (type(mdl3.config) == 'table' and mdl3.config.ui)
+        if type(ui) == 'table' and type(ui.language) == 'string' then
+            local l = ui.language:lower()
+            if l:find('zh') or l:find('chinese') then return true end
+            if l:find('en') or l:find('english') then return false end
+        end
+    end
+    local bt = rawget(_G, 'BingusTranslations')
+    if type(bt) == 'table' then
+        local lang = bt.override or bt.game_language
+        if type(lang) == 'string' and #lang >= 2 then
+            local l = lang:lower()
+            if l:find('zh') or l:find('chinese') or l:find('hans') or l:find('hant') then return true end
+            if l:find('en') or l:find('english') then return false end
+        end
+    end
+    local sr = rawget(_G, 'stingray')
+    if sr and sr.Localization and type(sr.Localization.language) == 'function' then
+        local ok, lang = pcall(sr.Localization.language)
+        if ok and type(lang) == 'string' and #lang >= 2 then
+            local l = lang:lower()
+            if l:find('zh') or l:find('chinese') or l:find('hans') or l:find('hant') then return true end
+            if l:find('en') or l:find('english') then return false end
+        end
+    end
+    local loc = ok_call(os.setlocale, nil, 'collate') or ok_call(os.setlocale, nil, 'all')
+    if type(loc) == 'string' then
+        local l = loc:lower()
+        if l:find('chinese') or l:find('china') or l:find('936') then return true end
+    end
+    return false -- default to English for international users (akamod / Nexus)
 end
 
 local function L(k)
@@ -185,17 +236,7 @@ end
 
 log_fmt('=== StimMusic v%s (MDL3 + HD2 Data Hub) outdir=%s ===', VERSION, tostring(log_dir))
 
--- ---------------------------------------------------------------- Configuration
-local CONFIG = {{
-    enabled = true,
-    volume = 100,
-    stim_ms = 6000,
-    fade_in_ms = 500,
-    fade_out_ms = 1500,
-    min_heal = 1,
-    hot_reload = true,
-    track = 'stim_music.wav',
-}}
+-- ---------------------------------------------------------------- Fingerprinting
 
 local function get_file_fingerprint(path)
     if not path then return nil end
@@ -295,6 +336,7 @@ local function load_ini_config()
             wf:write('min_heal = 1\\n')
             wf:write('hot_reload = 1\\n')
             wf:write('track = stim_music.wav\\n')
+            wf:write('language = auto\\n')
             wf:close()
             M.config_ini_fp = get_file_fingerprint(p)
         end
@@ -322,6 +364,7 @@ local function load_ini_config()
                 if val then CONFIG.min_heal = math.max(0, math.min(100, math.floor(val + 0.5))) end
             elseif k == 'hot_reload' then CONFIG.hot_reload = (v == '1' or v:lower() == 'true')
             elseif k == 'track' then CONFIG.track = v
+            elseif k == 'language' or k == 'locale' then CONFIG.language = v:lower()
             end
         end
     end
@@ -343,6 +386,7 @@ local function persist_ini_config()
     f:write('min_heal = ', tostring(math.floor(CONFIG.min_heal or 1)), '\\n')
     f:write('hot_reload = ', CONFIG.hot_reload and '1' or '0', '\\n')
     f:write('track = ', tostring(CONFIG.track or 'stim_music.wav'), '\\n')
+    f:write('language = ', tostring(CONFIG.language or 'auto'), '\\n')
     f:close()
     M.config_ini_fp = get_file_fingerprint(p)
 end
@@ -1660,12 +1704,12 @@ print("LOADER ACCEPTANCE: 100% PASSED!")
 manifest_data = {
     "Version": 1,
     "Guid": "c980dc93-4108-5742-80e4-28f6b06b928a",
-    "Name": f"StimMusic v{VERSION} (打针放音乐)",
-    "Description": "需要 MDL3 + HD2 Data Hub (0.3.0+) 前置。打针（回血）触发音乐播放，支持平滑渐入渐出、毫秒级动态断点接续与音量调节。可在 ESC -> MDL 设置中调节选项。",
+    "Name": f"StimMusic v{VERSION} - 打针放音乐",
+    "Description": "Requires MDL3 + HD2 Data Hub (0.3.0+). Plays custom music on stim/heal with smooth fade-in/out and dynamic sample resume. / 需要 MDL3 + HD2 Data Hub 前置。打针（回血）触发音乐播放，支持平滑渐入渐出、毫秒级断点接续与音量调节。可在 ESC -> MDL 设置中调节选项。",
     "Options": [
         {
             "Name": "StimMusic (打针放音乐)",
-            "Description": "需要 MDL3 + HD2 Data Hub (0.3.0+) 前置。打针（回血）触发音乐播放，支持平滑渐入渐出、毫秒级动态断点接续与音量调节。可在 ESC -> MDL 设置中调节选项。",
+            "Description": "Plays custom music upon stimming / healing. Supports fade in/out, volume control, and custom tracks. / 打针回血播放音乐，支持渐入渐出、音量调节与自定义音乐曲目。",
             "Include": [
                 "Addon"
             ]
