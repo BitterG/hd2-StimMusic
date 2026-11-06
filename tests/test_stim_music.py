@@ -3,6 +3,7 @@ Verifies loader acceptance, static security rules, and simulates gameplay events
 """
 from __future__ import annotations
 
+import os
 import re
 import struct
 import sys
@@ -67,6 +68,28 @@ class TestStaticSecurity(unittest.TestCase):
 
 
 class TestLuaRuntimeSimulation(unittest.TestCase):
+    def setUp(self):
+        for p in [
+            Path(os.path.expandvars(r'%LOCALAPPDATA%\MDL\Helldivers2\StimMusic\STIM_MUSIC_CONFIG.ini')),
+            Path(r'C:\ProgramData\MDL\Helldivers2\StimMusic\STIM_MUSIC_CONFIG.ini'),
+        ]:
+            if p.exists():
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
+
+    def tearDown(self):
+        for p in [
+            Path(os.path.expandvars(r'%LOCALAPPDATA%\MDL\Helldivers2\StimMusic\STIM_MUSIC_CONFIG.ini')),
+            Path(r'C:\ProgramData\MDL\Helldivers2\StimMusic\STIM_MUSIC_CONFIG.ini'),
+        ]:
+            if p.exists():
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
+
     def test_mock_simulation(self):
         lua = lupa.LuaRuntime(unpack_returned_tuples=False)
 
@@ -123,7 +146,11 @@ class TestLuaRuntimeSimulation(unittest.TestCase):
                     return true
                 end,
                 get = function(id) return nil end,
-                on_change = function(id, cb) end,
+                on_change = function(id, cb)
+                    if calls.options[id] then
+                        calls.options[id].cb = cb
+                    end
+                end,
             },
             locale = 'zh_CN',
         }
@@ -571,7 +598,7 @@ class TestLuaRuntimeSimulation(unittest.TestCase):
     def test_dynamic_sample_accurate_resume_and_stim_ms_adjustment(self):
         import subprocess
         # Generate 30s MS-ADPCM wav file
-        test_wav = ROOT / 'test_adpcm_resume.wav'
+        test_wav = Path(os.environ.get('TEMP', str(ROOT))) / 'test_adpcm_resume.wav'
         ffmpeg_bin = r'D:\ffmpeg-7.1.1-essentials_build\bin\ffmpeg.exe'
         cmd = [
             ffmpeg_bin,
@@ -1053,5 +1080,150 @@ class TestLuaRuntimeSimulation(unittest.TestCase):
         self.assertEqual(opts_intl['kugua_stim_music.fade_in_ms'].label, 'Fade In (ms)')
 
 
+
+    def test_audio_api2_handle_and_live_control(self):
+        """Verify Audio API 2: integer handle tracking, live volume set/master, hardware accurate info position, halt."""
+        lua = lupa.LuaRuntime(unpack_returned_tuples=False)
+        src = (ROOT / 'Source/mods/kugua/stim_music.lua').read_text(encoding='ascii')
+
+        env_setup = """
+        local calls = {
+            audio_plays = {},
+            audio_stops = {},
+            audio_halts = {},
+            audio_sets = {},
+            audio_masters = {},
+            audio_infos = {},
+            options = {},
+            subscribers = {},
+        }
+
+        local mock_player_data = {
+            health = 80,
+            health_max = 100,
+            stims = 4,
+            alive = true,
+        }
+
+        local handle_counter = 100
+
+        -- Mock MDL3 Audio API 2
+        _G.MDL3 = {
+            audio = {
+                api = 2,
+                define_format = function(ns, fmt) return true end,
+                pool = function(ns, roles) return true end,
+                upload = function(ns, key, b64) return true end,
+                status = function(ns) return { ready = 0, pool = 2 } end,
+                play = function(ns, key, opts)
+                    handle_counter = handle_counter + 1
+                    local h = handle_counter
+                    table.insert(calls.audio_plays, { ns = ns, key = key, opts = opts, handle = h })
+                    return h
+                end,
+                halt = function(handle)
+                    table.insert(calls.audio_halts, handle)
+                    return true
+                end,
+                stop = function(ns, role)
+                    table.insert(calls.audio_stops, { ns = ns, role = role })
+                    return true
+                end,
+                set = function(handle, opts)
+                    table.insert(calls.audio_sets, { handle = handle, opts = opts })
+                    return true
+                end,
+                master = function(ns, vol)
+                    table.insert(calls.audio_masters, { ns = ns, volume = vol })
+                    return true
+                end,
+                info = function(handle)
+                    table.insert(calls.audio_infos, handle)
+                    return { state = 'playing', position = 2.75, duration = 4.0 }
+                end,
+            },
+            mod_options_menu = {
+                register_option = function(id, spec)
+                    calls.options[id] = spec
+                    return true
+                end,
+                get = function(id) return nil end,
+                on_change = function(id, cb)
+                    if calls.options[id] then
+                        calls.options[id].cb = cb
+                    end
+                end,
+            },
+            locale = 'zh_CN',
+        }
+
+        _G.HD2Data = {
+            api = 1,
+            version = '0.6.0',
+            on = function(evt, cb)
+                calls.subscribers[evt] = cb
+                return { active = function() return true end }
+            end,
+            player = function()
+                return mock_player_data
+            end,
+        }
+
+        _G.CALLS = calls
+        _G.MOCK_PLAYER = mock_player_data
+        """
+        lua.execute(env_setup)
+        mod = lua.execute(src)
+        self.assertIsNotNone(mod)
+        M = lua.globals()['__KUGUA_STIM_MUSIC']
+        self.assertIsNotNone(M)
+
+        calls = lua.globals().CALLS
+
+        # 1. Simulate initial frame to register hooks & establish baseline
+        step_fn = lua.globals().update
+        step_fn(0.0)
+        step_fn(0.1)
+
+        # 2. Trigger stim / healing (stims drops from 4 to 3)
+        lua.globals().MOCK_PLAYER.stims = 3
+        step_fn(0.1)
+
+        # Verify play was invoked and returned handle 101
+        self.assertEqual(len(calls.audio_plays), 1)
+        self.assertEqual(calls.audio_plays[1].handle, 101)
+        self.assertEqual(M.current_handle, 101)
+        self.assertEqual(M.audio_api_level, 2)
+        self.assertTrue(M.is_playing)
+
+        # 3. Test dynamic live volume change via slider callback while playing
+        vol_slider = calls.options['kugua_stim_music.volume']
+        self.assertIsNotNone(vol_slider)
+        self.assertIsNotNone(vol_slider.cb)
+        vol_slider.cb(80)
+
+        # Should call A.set(101, { volume = 80 }) and A.master('stim_music_0', 80)
+        self.assertGreaterEqual(len(calls.audio_sets), 1)
+        self.assertEqual(calls.audio_sets[1].handle, 101)
+        self.assertEqual(calls.audio_sets[1].opts.volume, 80)
+        self.assertGreaterEqual(len(calls.audio_masters), 1)
+        self.assertEqual(calls.audio_masters[1].volume, 80)
+
+        # 4. Stop playback (e.g. timeout or stim ends)
+        # Advance clock past stim_ms (dt is capped at 1.0s per tick)
+        for _ in range(8):
+            step_fn(1.0)
+
+        # Should have called A.info(101) to get hardware position (2.75s)
+        self.assertIn(101, list(calls.audio_infos.values()))
+        # Track position should be updated using hardware position 2.75s % 4.0s = 2.75s
+        self.assertAlmostEqual(M.track_pos, 2.75, places=2)
+        # Should have called A.halt(101)
+        self.assertIn(101, list(calls.audio_halts.values()))
+        self.assertIsNone(M.current_handle)
+        self.assertFalse(M.is_playing)
+
+
 if __name__ == '__main__':
+
     unittest.main()

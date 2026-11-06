@@ -1,4 +1,4 @@
-# StimMusic v2.2.0 — 打针放音乐 (MDL3 + HD2 Data Hub 现代重构版)
+# StimMusic v2.3.0 — 打针放音乐 (MDL3 + HD2 Data Hub 现代重构版)
 
 > 本模组已按照《MDL3 模组规范》全面迁移至 **MDL3 (3.0.0-dev.21+)** 与 **HD2 Data Hub (0.3.0+)** 现代架构。纯 PUC Lua 5.1 编写，移除旧版 FFI 与硬编码内存依赖，安全稳定，跨版本免疫。
 
@@ -16,6 +16,11 @@
    - 菜单内可直接在放入文件夹的歌曲中随意选择切换，0 延迟秒播，杜绝切歌掉帧与卡顿。
 4. **一键转码与自动化部署**：
    - 自带转码工具，支持将任意音频一键转换为高保真 16-bit PCM WAV。
+5. **适配 MDL3 dev.43 (Audio API 2) 原生硬件句柄与无级动态调音**：
+   - **原生音频句柄**：支持 API 2 返回的独立正整数音频句柄（Handle），告别粗暴全局停止，实现精准单音停止（`A.halt`）。
+   - **实时动态音量控制**：在菜单中拖动音量滑块或修改配置时，通过 `A.set(h, { volume = ... })` 与 `A.master()` 实时无级生效，无需等待下一段音频或打断重播。
+   - **硬件级零漂移断点**：通过 `A.info(h).position` 直读底层 XAudio2 硬件真实播放进度，暂停、掉帧或切出菜单也能 100% 精准锁定断点。
+   - **双轨无缝向下兼容**：自动向下兼容 MDL3 dev.21 ~ dev.33 (Audio API 1)，新旧版本即插即用。
 
 ---
 
@@ -103,7 +108,7 @@
 
 ---
 
-# StimMusic v2.2.0 — Stim & Healing Music Player (English Guide)
+# StimMusic v2.3.0 — Stim & Healing Music Player (English Guide)
 
 > StimMusic is a lightweight, modern audio enhancement mod built for **MDL3 (3.0.0-dev.21+)** and **HD2 Data Hub (0.3.0+)**.
 > Written in 100% pure PUC Lua 5.1 with zero FFI, zero memory patching, and full game patch resilience.
@@ -125,6 +130,11 @@
    - Can also be forced via `language = en` or `language = zh` in `STIM_MUSIC_CONFIG.ini`.
 5. **One-Click Audio Converter Included**:
    - Includes `convert_track.cmd` and `convert_track.ps1` to convert any audio (.mp3, .flac, .ogg, .m4s, etc.) into high-fidelity 16-bit PCM WAV with one click or drag-and-drop.
+6. **MDL3 dev.43 (Audio API 2) Native Handle & Dynamic Realtime Control**:
+   - **Native Audio Handles**: Fully tracks individual voice handles (`h > 0`) for fine-grained per-voice stopping (`A.halt`).
+   - **Live Volume Modulation**: Adjusting volume via slider immediately updates running playback via `A.set(handle, { volume = ... })` and `A.master()` without restarting or stuttering.
+   - **Hardware-Accurate Zero-Drift Resume**: Queries native XAudio2 playback seconds via `A.info(handle).position` for perfect checkpoint preservation across menu pauses and framerate dips.
+   - **100% Backward Compatibility**: Seamlessly runs on both MDL3 dev.43+ (API 2) and dev.21-33 (API 1).
 
 ---
 
@@ -138,7 +148,7 @@
 
 ### Installation
 - **Arsenal Mod Manager (Recommended)**:
-  Drag and drop `StimMusic-2.2.0.zip` into Arsenal Mod Manager, enable it, and click **Deploy**.
+  Drag and drop `StimMusic-2.3.0.zip` into Arsenal Mod Manager, enable it, and click **Deploy**.
 - **Manual Installation**:
   Extract `Addon/9ba626afa44a3aa3.patch_0` (along with its companion files `.gpu_resources` and `.stream`) into your Helldivers 2 game directory: `Helldivers 2\data\`. If `patch_0` already exists, you can rename it to `patch_1`, `patch_2`, etc.
 

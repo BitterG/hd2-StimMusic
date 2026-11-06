@@ -1,5 +1,5 @@
 -- HD2-Addon: mods/kugua/stim_music
--- StimMusic v2.2.1 for MDL3 (PUC Lua 5.1) + HD2 Data Hub >= 0.3.0 (HD2Data API 1).
+-- StimMusic v2.3.0 for MDL3 (PUC Lua 5.1) + HD2 Data Hub >= 0.3.0 (HD2Data API 1).
 -- Plays audio on stim / healing with segment resume and volume controls.
 -- Pure Lua 5.1, zero FFI, zero memory writes, 7-bit ASCII only.
 
@@ -9,7 +9,7 @@ if type(rawget(_G, KEY)) == 'table' and rawget(_G, KEY).active == true then
 end
 
 local ADDON_ID = 'mods/kugua/stim_music'
-local VERSION = '2.2.1'
+local VERSION = '2.3.0'
 
 local sr = rawget(_G, 'stingray')
 local App = sr and sr.Application
@@ -294,6 +294,8 @@ local M = {
     track_pos = 0.0,
     cue_idx = 0,
     current_key = nil,
+    current_handle = nil,
+    audio_api_level = 1,
     playing_ns = nil,
     play_retry_key = nil,
     play_retry_ns = nil,
@@ -359,7 +361,10 @@ local function load_ini_config()
             if k == 'enabled' then CONFIG.enabled = (v == '1' or v:lower() == 'true')
             elseif k == 'volume' then
                 local val = tonumber(v)
-                if val then CONFIG.volume = math.max(0, math.min(100, math.floor(val + 0.5))) end
+                if val then
+                    CONFIG.volume = math.max(0, math.min(100, math.floor(val + 0.5)))
+                    if apply_live_volume then apply_live_volume(CONFIG.volume) end
+                end
             elseif k == 'stim_ms' then
                 local val = tonumber(v)
                 if val then CONFIG.stim_ms = math.max(1000, math.min(30000, math.floor(val + 0.5))) end
@@ -1000,7 +1005,7 @@ local NS_RING = {
 local function get_audio_service()
     local mdl3 = rawget(_G, 'MDL3')
     local A = type(mdl3) == 'table' and mdl3.audio or nil
-    if type(A) == 'table' and A.api == 1 and type(A.play) == 'function' then
+    if type(A) == 'table' and type(A.api) == 'number' and A.api >= 1 and type(A.play) == 'function' then
         return A
     end
     return nil
@@ -1084,9 +1089,13 @@ end
 local function probe_audio_api(A, ns)
     if M.audio_api_probed or not A then return end
     M.audio_api_probed = true
-    log_fmt('=== MDL3 Audio API Diagnostics ===')
+    M.audio_api_level = tonumber(A.api) or 1
+    log_fmt('=== MDL3 Audio API Diagnostics (Level: %d) ===', M.audio_api_level)
     for k, v in pairs(A) do
         log_fmt('  MDL3.audio.%s = %s (%s)', tostring(k), type(v), tostring(v))
+    end
+    if M.audio_api_level >= 2 then
+        log_fmt('  API 2 Extended Capabilities: Handles, live set(), info(), halt(), pause(), master() enabled')
     end
     if type(A.status) == 'function' and ns then
         local ok, st = pcall(A.status, ns)
@@ -1242,6 +1251,20 @@ local function init_audio_track()
     return true
 end
 
+apply_live_volume = function(new_vol)
+    local A = get_audio_service()
+    if not A then return end
+    local vol = math.max(0, math.min(100, math.floor((new_vol or 100) + 0.5)))
+    if A.api and A.api >= 2 then
+        if M.is_playing and M.current_handle and type(A.set) == 'function' then
+            pcall(A.set, M.current_handle, { volume = vol })
+        end
+        if type(A.master) == 'function' and M.current_ns then
+            pcall(A.master, M.current_ns, vol)
+        end
+    end
+end
+
 -- ---------------------------------------------------------------- Stim Music Actions
 local function start_stim_playback(is_chain)
     if not CONFIG.enabled then return false end
@@ -1276,7 +1299,10 @@ local function start_stim_playback(is_chain)
     end
     
     local ok, played = pcall(A.play, ns, key, { role = ROLE, volume = vol })
-    if ok and played == true then
+    local is_played = ok and played and played ~= false
+    if is_played then
+        local handle = (type(played) == 'number' and played > 0) and played or nil
+        M.current_handle = handle
         M.is_playing = true
         M.play_start_clock = M.clock
         M.play_start_pos = actual_pos or (M.track_pos or 0.0)
@@ -1287,11 +1313,13 @@ local function start_stim_playback(is_chain)
         M.play_retries = 0
         M.stims_count = M.stims_count + 1
         local total_dur = M.audio_info and M.audio_info.duration or (M.using_default and 4.0 or 0.0)
-        M.last_status_verdict = string.format('PLAYING - at %.1fs / %.1fs (vol=%d%%)', M.play_start_pos, total_dur, vol)
-        log_fmt('Stim music started: %s on %s from pos=%.2fs (vol=%d, dur=%.1fs, stim#=%d, chain=%s)',
-            key, ns, M.play_start_pos, vol, dur, M.stims_count, tostring(is_chain == true))
+        M.last_status_verdict = string.format('PLAYING - at %.1fs / %.1fs (vol=%d%%, handle=%s)',
+            M.play_start_pos, total_dur, vol, tostring(handle or 'none'))
+        log_fmt('Stim music started: %s on %s from pos=%.2fs (vol=%d, dur=%.1fs, stim#=%d, chain=%s, handle=%s)',
+            key, ns, M.play_start_pos, vol, dur, M.stims_count, tostring(is_chain == true), tostring(handle or 'none'))
         return true
     else
+        M.current_handle = nil
         M.is_playing = false
         local retries = (M.play_retries or 0) + 1
         M.play_retries = retries
@@ -1311,8 +1339,19 @@ end
 local function stop_stim_playback(reason)
     if not M.stim_active and not M.is_playing and not M.play_retry_key then return end
     
+    local A = get_audio_service()
     local elapsed = 0.0
-    if M.is_playing and M.play_start_clock and M.play_start_clock > 0 then
+    local queried_pos = false
+    
+    if A and A.api and A.api >= 2 and M.current_handle and type(A.info) == 'function' then
+        local ok, inf = pcall(A.info, M.current_handle)
+        if ok and type(inf) == 'table' and type(inf.position) == 'number' and inf.position >= 0 then
+            elapsed = inf.position
+            queried_pos = true
+        end
+    end
+    
+    if not queried_pos and M.is_playing and M.play_start_clock and M.play_start_clock > 0 then
         elapsed = math.max(0.0, M.clock - M.play_start_clock)
         if M.cue_duration and elapsed > M.cue_duration then
             elapsed = M.cue_duration
@@ -1332,11 +1371,16 @@ local function stop_stim_playback(reason)
     M.play_retry_key = nil
     M.play_retries = 0
     
-    local A = get_audio_service()
     local ns = M.playing_ns or M.current_ns
-    if A and ns then
-        pcall(A.stop, ns, ROLE)
+    if A then
+        if A.api and A.api >= 2 and M.current_handle and type(A.halt) == 'function' then
+            pcall(A.halt, M.current_handle)
+        end
+        if ns and type(A.stop) == 'function' then
+            pcall(A.stop, ns, ROLE)
+        end
     end
+    M.current_handle = nil
     
     if M.prepared_pos and math.abs(M.prepared_pos - M.track_pos) >= 0.05 then
         M.prepared_key = nil
@@ -1371,6 +1415,12 @@ local function write_status_snapshot()
     f:write('hot_reload=', tostring(CONFIG.hot_reload), '\n')
     f:write('folder=', tostring(log_dir), '\n')
     f:write('namespace=', tostring(M.current_ns or 'none'), '\n')
+    local A = get_audio_service()
+    f:write('audio_api=', tostring(A and A.api or (M.audio_api_level or 1)), '\n')
+    f:write('handle=', tostring(M.current_handle or 'none'), '\n')
+    local A = get_audio_service()
+    f:write('audio_api=', tostring(A and A.api or (M.audio_api_level or 1)), '\n')
+    f:write('handle=', tostring(M.current_handle or 'none'), '\n')
     f:write('track=', tostring(M.audio_track_path or '[embedded default]'), '\n')
     f:write('filename=', tostring(M.audio_track_filename or 'none'), '\n')
     f:write('using_default=', tostring(M.using_default), '\n')
@@ -1485,6 +1535,7 @@ local function bind_mod_options()
             if num ~= CONFIG.volume then
                 CONFIG.volume = num
                 log_fmt('Volume set to %d%%', CONFIG.volume)
+                if apply_live_volume then apply_live_volume(CONFIG.volume) end
                 if num == 0 and (M.stim_active or M.is_playing) then
                     stop_stim_playback('mute')
                 end
@@ -1702,7 +1753,10 @@ local function step(dt)
             if A then
                 local vol = math.max(0, math.min(100, math.floor((CONFIG.volume or 100) + 0.5)))
                 local ok, played = pcall(A.play, M.play_retry_ns, M.play_retry_key, { role = ROLE, volume = vol })
-                if ok and played == true then
+                local is_played = ok and played and played ~= false
+                if is_played then
+                    local handle = (type(played) == 'number' and played > 0) and played or nil
+                    M.current_handle = handle
                     M.is_playing = true
                     M.play_start_clock = M.clock
                     M.play_start_pos = M.play_retry_pos or (M.track_pos or 0.0)
@@ -1713,8 +1767,10 @@ local function step(dt)
                     M.play_retries = 0
                     M.stims_count = M.stims_count + 1
                     local total_dur = M.audio_info and M.audio_info.duration or (M.using_default and 4.0 or 0.0)
-                    M.last_status_verdict = string.format('PLAYING - at %.1fs / %.1fs (vol=%d%%)', M.play_start_pos, total_dur, vol)
-                    log_fmt('Stim play retry succeeded for %s on %s', M.current_key, M.playing_ns)
+                    M.last_status_verdict = string.format('PLAYING - at %.1fs / %.1fs (vol=%d%%, handle=%s)',
+                        M.play_start_pos, total_dur, vol, tostring(handle or 'none'))
+                    log_fmt('Stim play retry succeeded for %s on %s (handle=%s)',
+                        M.current_key, M.playing_ns, tostring(handle or 'none'))
                 else
                     M.play_retries = (M.play_retries or 0) + 1
                     M.play_retry_clock = M.clock + 0.05
@@ -1876,12 +1932,18 @@ rawset(_G, 'shutdown', function(...)
         M.active = false
         stop_stim_playback('shutdown')
         local A = get_audio_service()
-        if A and type(A.release) == 'function' then
-            for _, ns in ipairs(NS_RING) do
-                pcall(A.stop, ns, ROLE)
-                pcall(A.release, ns)
+        if A then
+            if M.current_handle and A.api and A.api >= 2 and type(A.halt) == 'function' then
+                pcall(A.halt, M.current_handle)
+            end
+            if type(A.release) == 'function' then
+                for _, ns in ipairs(NS_RING) do
+                    pcall(A.stop, ns, ROLE)
+                    pcall(A.release, ns)
+                end
             end
         end
+        M.current_handle = nil
         unsubscribe_all()
         if log_file then
             log_file:close()
